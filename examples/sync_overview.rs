@@ -26,8 +26,13 @@ fn main() -> gtk::glib::ExitCode {
         content.set_margin_start(24);
         content.set_margin_end(24);
         content.set_margin_bottom(24);
-        let state =
-            gtk::DropDown::from_strings(&["Verificando", "Sincronizando", "Concluído", "Atenção"]);
+        let state = gtk::DropDown::from_strings(&[
+            "Verificando",
+            "Sincronizando",
+            "Concluído",
+            "Atenção",
+            "Inativa",
+        ]);
         content.append(&state);
         content.append(view.widget());
         let controls = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -103,6 +108,9 @@ fn main() -> gtk::glib::ExitCode {
                     },
                     2 => SyncOverviewState::Completed {
                         last_sync: last.is_active().then(SystemTime::now),
+                    },
+                    4 => SyncOverviewState::Inactive {
+                        message: "Sincronização interrompida".into(),
                     },
                     _ => SyncOverviewState::Attention {
                         pending_items: value(6),

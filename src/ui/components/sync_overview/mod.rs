@@ -152,6 +152,12 @@ impl SyncOverview {
                     "view-refresh-symbolic",
                 )
             }
+            SyncOverviewState::Inactive { message } => (
+                gettext("Synchronization inactive"),
+                message,
+                String::new(),
+                "media-playback-pause-symbolic",
+            ),
             SyncOverviewState::Completed { last_sync } => {
                 self.icon.add_css_class("success");
                 (

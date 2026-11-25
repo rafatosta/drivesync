@@ -482,23 +482,30 @@ pub fn map_status(status: &drivesync_engine::SynchronizationStatus, audited: boo
 }
 
 /// Operation steps and byte-less telemetry must never become account item progress.
-fn overview_state(snapshot: &Snapshot) -> Option<SyncOverviewState> {
+pub(super) fn overview_state(snapshot: &Snapshot) -> Option<SyncOverviewState> {
     use crate::ui::components::sync_overview::SyncOverviewState as Overview;
     match snapshot.status {
-        StatusView::Checking | StatusView::Initializing => Some(Overview::Checking {
+        StatusView::Checking
+        | StatusView::Initializing
+        | StatusView::WaitingForEvidence
+        | StatusView::VerificationIncomplete => Some(Overview::Checking {
             checked_items: None,
         }),
-        StatusView::Synchronizing | StatusView::Recovering => Some(Overview::Syncing {
-            completed_items: None,
-            total_items: None,
-            remaining_items: None,
-            remaining_bytes: None,
-            progress: None,
-        }),
+        StatusView::Synchronizing | StatusView::Recovering | StatusView::Finalizing => {
+            Some(Overview::Syncing {
+                completed_items: None,
+                total_items: None,
+                remaining_items: None,
+                remaining_bytes: None,
+                progress: None,
+            })
+        }
         StatusView::Synced => Some(Overview::Completed { last_sync: None }),
         StatusView::Attention | StatusView::Failed => Some(Overview::Attention {
             pending_items: None,
         }),
-        _ => None,
+        StatusView::Stopped | StatusView::Offline => Some(Overview::Inactive {
+            message: snapshot.description.clone(),
+        }),
     }
 }

@@ -1889,3 +1889,7 @@ msgstr "."
 #: src/ui/components/sync_overview/mod.rs
 msgid "Synchronizing your files"
 msgstr "Sincronizando seus arquivos"
+
+#: src/ui/components/sync_overview/mod.rs
+msgid "Synchronization inactive"
+msgstr "Sincronização inativa"

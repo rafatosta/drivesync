@@ -16,6 +16,10 @@ pub enum SyncOverviewState {
         /// Normalized progress. Finite values are clamped; non-finite values are unavailable.
         progress: Option<f64>,
     },
+    /// A selected account whose synchronization cannot currently run.
+    Inactive {
+        message: String,
+    },
     Completed {
         last_sync: Option<SystemTime>,
     },

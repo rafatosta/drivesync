@@ -144,7 +144,7 @@ pub struct StatusItem {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
-    /// Absent when the detailed status cannot be represented by the four overview states.
+    /// Absent when no account overview is available.
     pub overview: Option<crate::ui::components::sync_overview::SyncOverviewState>,
     pub scope: String,
     pub status: StatusView,

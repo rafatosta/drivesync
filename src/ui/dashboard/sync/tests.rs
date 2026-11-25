@@ -568,7 +568,10 @@ fn public_status_requires_audit_and_keeps_operation_counts_out_of_bytes() {
     assert_ne!(map_status(&value, false).status, StatusView::Synced);
     assert_eq!(map_status(&value, true).status, StatusView::Synced);
     use crate::ui::components::sync_overview::SyncOverviewState as Overview;
-    assert_eq!(map_status(&value, false).overview, None);
+    assert!(matches!(
+        map_status(&value, false).overview,
+        Some(Overview::Checking { .. })
+    ));
     assert_eq!(
         map_status(&value, true).overview,
         Some(Overview::Completed { last_sync: None })
@@ -1357,6 +1360,51 @@ fn overview_reads_real_engine_profile_without_starting_synchronization() {
             .unwrap();
         assert_eq!(snapshot.scope, account.0);
         assert_eq!(snapshot.status, StatusView::Stopped);
-        assert_eq!(snapshot.overview, None);
+        assert!(matches!(
+            snapshot.overview,
+            Some(crate::ui::components::sync_overview::SyncOverviewState::Inactive { .. })
+        ));
     });
+}
+
+#[test]
+#[ignore = "requires an isolated GTK display"]
+fn overview_remains_visible_through_all_account_lifecycle_states() {
+    adw::init().unwrap();
+    let controller = DashboardController::new();
+    controller.select("lifecycle".into(), Box::new(FakeSyncBackend::new([])));
+    let status = drivesync_engine::SynchronizationStatus {
+        account_id: drivesync_engine::AccountId("lifecycle".into()),
+        state: drivesync_engine::SynchronizationState::Idle,
+        activity: drivesync_engine::SynchronizationActivity::None,
+        current_item: None,
+        current_operation: None,
+        progress: None,
+        verification: None,
+        issue: None,
+        updated_at: drivesync_engine::Timestamp { unix_millis: 0 },
+    };
+    let mut snapshot = map_status(&status, false);
+    for state in [
+        StatusView::Initializing,
+        StatusView::Checking,
+        StatusView::Synchronizing,
+        StatusView::Finalizing,
+        StatusView::WaitingForEvidence,
+        StatusView::VerificationIncomplete,
+        StatusView::Recovering,
+        StatusView::Attention,
+        StatusView::Failed,
+        StatusView::Stopped,
+        StatusView::Offline,
+        StatusView::Synced,
+    ] {
+        snapshot.status = state.clone();
+        snapshot.overview = super::backend::overview_state(&snapshot);
+        assert!(snapshot.overview.is_some(), "{state:?}");
+        assert!(controller.apply(snapshot.clone()));
+        assert!(controller.overview.widget().is_visible(), "{state:?}");
+    }
+    controller.reset();
+    assert!(!controller.overview.widget().is_visible());
 }

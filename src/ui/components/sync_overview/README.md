@@ -5,10 +5,10 @@ the existing account-scoped EngineAdapter subscription. The component itself has
 no Engine imports. The simulated dashboard selector has been removed; the isolated
 example remains available.
 
-The adapter maps checks, active synchronization, audited completion and actionable
-issues. Idle alone never means completion. States outside the four-state contract
-(stopped, incomplete verification, waiting or finalizing) keep the existing detailed
-status visible and hide the overview. Its action opens the existing account-scoped
+The adapter keeps the overview visible throughout the selected account lifecycle,
+including waiting, incomplete verification and finalizing. Idle alone never means
+completion. Stopped and offline states use a neutral inactive presentation without
+progress or a success indication. Its action opens the existing account-scoped
 diagnostic page. Selection changes reset the view and cancel obsolete subscriptions.
 
 The Engine currently exposes operation steps, not account-wide item or byte
