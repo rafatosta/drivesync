@@ -353,7 +353,7 @@ async fn local(worker: Arc<SourceWorker>) {
             observing.transition(State::Running, Details::default);
             match observer.poll(&token, Some(&observing)) {
                 Ok((_, coverage)) => {
-                    let snapshot = observer.snapshot();
+                    let snapshot = observer.snapshot(&observing);
                     observing.transition(State::Running, || {
                         Details::count(Progress::new(
                             Unit::Observations,
@@ -365,7 +365,7 @@ async fn local(worker: Arc<SourceWorker>) {
                     Ok((snapshot, coverage))
                 }
                 Err(error) => {
-                    let unavailable = observer.unavailable();
+                    let unavailable = observer.unavailable(Some(&observing));
                     observing.finish(if matches!(error, ScanError::Cancelled) {
                         State::Cancelled
                     } else {

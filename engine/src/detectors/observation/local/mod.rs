@@ -1,10 +1,14 @@
 //! Continuous local observation by verified event-driven reads and periodic audits.
 use super::{
     remote::interfaces::CancellationToken,
-    scanner::{now, ScanError, ScanResult, Scanner},
+    scanner::{now, ScanError, ScanIssueKind, ScanResult, Scanner},
     LocalObservation, LocalObservationSource, Observation, ObservationCoverage,
 };
-use crate::{detectors::activity::ActivityGuard, models::*};
+use crate::{
+    detectors::activity::{ActivityGuard, Reason},
+    models::*,
+};
+use activity::{Batch, Step};
 mod activity;
 use std::collections::BTreeMap;
 /// Retains only the last complete snapshot. Partial rounds cannot produce removal evidence.
@@ -28,12 +32,23 @@ impl LocalObserver {
     }
 
     /// Full latest read, including unchanged entries; coverage is supplied by poll.
-    pub(crate) fn snapshot(&self) -> Vec<LocalObservation> {
-        self.latest.clone()
+    pub(crate) fn snapshot(&self, activity: &ActivityGuard) -> Vec<LocalObservation> {
+        let mut batch = Batch::new(Some(activity), Step::Materialize, self.latest.len());
+        let result = self
+            .latest
+            .iter()
+            .cloned()
+            .inspect(|_| batch.advance())
+            .collect();
+        batch.finish();
+        result
     }
     /// Invalidates prior evidence on source loss; it never declares those entries absent.
-    pub(crate) fn unavailable(&self) -> Vec<Observation> {
-        self.previous
+    pub(crate) fn unavailable(&self, activity: Option<&ActivityGuard>) -> Vec<Observation> {
+        let total = self.previous.as_ref().map_or(0, BTreeMap::len);
+        let mut batch = Batch::new(activity, Step::Recover(Reason::CoverageLost), total);
+        let result = self
+            .previous
             .iter()
             .flat_map(|entries| entries.values())
             .cloned()
@@ -46,7 +61,10 @@ impl LocalObserver {
                 data.capabilities = Evidence::Unavailable;
                 envelope(data, ObservationKind::RecheckRequired)
             })
-            .collect()
+            .inspect(|_| batch.advance())
+            .collect();
+        batch.finish();
+        result
     }
     /// Produces initial Scanner snapshots, then Watcher changes from complete comparisons.
     pub(crate) fn poll(
@@ -65,42 +83,75 @@ impl LocalObserver {
                 return Err(error);
             }
         };
-        if scan
+        let budget_reached = scan
             .issues
             .iter()
-            .any(|issue| issue.kind == super::scanner::ScanIssueKind::LimitReached)
-        {
+            .any(|issue| issue.kind == ScanIssueKind::LimitReached);
+        if budget_reached {
             self.scanner.expand_limit();
         }
         let coverage = scan.coverage;
-        self.latest = scan.entries.values().cloned().collect();
+        let mut batch = Batch::new(activity, Step::Materialize, scan.entries.len());
+        self.latest = scan
+            .entries
+            .values()
+            .cloned()
+            .inspect(|_| batch.advance())
+            .collect();
+        batch.finish();
+        let incomplete = if budget_reached {
+            Reason::BudgetReached
+        } else {
+            Reason::IncompleteObservation
+        };
         let observations = if let (Some(previous), true) = (&self.previous, self.recheck) {
+            let mut batch = Batch::new(activity, Step::Recover(incomplete), scan.entries.len());
             let mut observations: Vec<_> = scan
                 .entries
                 .values()
                 .cloned()
                 .map(|data| envelope(data, ObservationKind::RecheckRequired))
+                .inspect(|_| batch.advance())
                 .collect();
+            batch.finish();
             if coverage == ObservationCoverage::Complete {
-                observations.extend(diff(previous,&scan).into_iter().filter(|observation|matches!(observation,Observation::Local {data,..} if data.state==FileState::Absent)));
+                observations.extend(diff(previous, &scan, activity).into_iter().filter(|observation|matches!(observation,Observation::Local {data,..} if data.state==FileState::Absent)));
             }
             observations
         } else if let Some(previous) = &self.previous {
             if coverage == ObservationCoverage::Complete {
-                diff(previous, &scan)
+                diff(previous, &scan, activity)
             } else {
-                scan.observations(LocalObservationSource::Watcher)
+                observations(
+                    &scan,
+                    LocalObservationSource::Watcher,
+                    activity,
+                    Step::Recover(incomplete),
+                )
             }
         } else {
-            scan.observations(LocalObservationSource::Scanner)
+            let step = if coverage == ObservationCoverage::Complete {
+                Step::Materialize
+            } else {
+                Step::Recover(incomplete)
+            };
+            observations(&scan, LocalObservationSource::Scanner, activity, step)
         };
+        let mut batch = Batch::new(
+            activity,
+            Step::Materialize,
+            observations.len() + self.latest.len(),
+        );
         let events: BTreeMap<_, _> = observations
             .iter()
-            .filter_map(|observation| match observation {
-                Observation::Local { data, .. } => {
-                    data.path.clone().map(|path| (path, data.event.clone()))
+            .filter_map(|observation| {
+                batch.advance();
+                match observation {
+                    Observation::Local { data, .. } => {
+                        data.path.clone().map(|path| (path, data.event.clone()))
+                    }
+                    _ => None,
                 }
-                _ => None,
             })
             .collect();
         for entry in &mut self.latest {
@@ -111,7 +162,9 @@ impl LocalObserver {
                     event.origin = ObservationOrigin::Local;
                 }
             }
+            batch.advance();
         }
+        batch.finish();
         if coverage == ObservationCoverage::Complete {
             self.previous = Some(scan.entries);
             self.recheck = false;
@@ -122,17 +175,22 @@ impl LocalObserver {
         Ok((observations, coverage))
     }
 }
-fn diff(previous: &BTreeMap<Path, LocalObservation>, scan: &ScanResult) -> Vec<Observation> {
+fn diff(
+    previous: &BTreeMap<Path, LocalObservation>,
+    scan: &ScanResult,
+    activity: Option<&ActivityGuard>,
+) -> Vec<Observation> {
+    let mut batch = Batch::new(activity, Step::Compare, previous.len() + scan.entries.len());
     let mut result = Vec::new();
     for (path, current) in &scan.entries {
         let kind = match previous.get(path) {
-            None => ObservationKind::Created,
+            None => Some(ObservationKind::Created),
             Some(old)
                 if old.checksum != current.checksum
                     || old.size != current.size
                     || old.kind != current.kind =>
             {
-                ObservationKind::Modified
+                Some(ObservationKind::Modified)
             }
             Some(old)
                 if old.modified_at != current.modified_at
@@ -140,11 +198,14 @@ fn diff(previous: &BTreeMap<Path, LocalObservation>, scan: &ScanResult) -> Vec<O
                     || old.identity != current.identity
                     || old.capabilities != current.capabilities =>
             {
-                ObservationKind::MetadataChanged
+                Some(ObservationKind::MetadataChanged)
             }
-            _ => continue,
+            _ => None,
         };
-        result.push(envelope(current.clone(), kind));
+        if let Some(kind) = kind {
+            result.push(envelope(current.clone(), kind));
+        }
+        batch.advance();
     }
     for (path, old) in previous {
         if !scan.entries.contains_key(path) {
@@ -155,10 +216,39 @@ fn diff(previous: &BTreeMap<Path, LocalObservation>, scan: &ScanResult) -> Vec<O
             missing.size = Evidence::NotCollected;
             result.push(envelope(missing, ObservationKind::Removed));
         }
+        batch.advance();
     }
+    batch.finish();
     // Polling has no kernel move cookie: never assert a rename merely from recycled inode values.
     result
 }
+fn observations(
+    scan: &ScanResult,
+    source: LocalObservationSource,
+    activity: Option<&ActivityGuard>,
+    step: Step,
+) -> Vec<Observation> {
+    let mut batch = Batch::new(activity, step, scan.entries.len());
+    let result = scan
+        .entries
+        .values()
+        .cloned()
+        .map(|mut data| {
+            if let Some(event) = &mut data.event {
+                event.origin = if source == LocalObservationSource::Scanner {
+                    ObservationOrigin::Scanner
+                } else {
+                    ObservationOrigin::Local
+                };
+            }
+            Observation::Local { source, data }
+        })
+        .inspect(|_| batch.advance())
+        .collect();
+    batch.finish();
+    result
+}
+
 fn envelope(mut data: LocalObservation, kind: ObservationKind) -> Observation {
     data.event = Some(ObservationEvent {
         origin: ObservationOrigin::Local,

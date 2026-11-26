@@ -30,6 +30,8 @@ pub(crate) enum Phase {
     Traverse,
     Recover,
     Checksum,
+    CompareSnapshots,
+    BuildObservations,
     Deliver,
     Idle,
 }
@@ -62,6 +64,7 @@ pub(crate) enum Unit {
     Directories,
     SnapshotItems,
     ChecksumsReused,
+    ItemsCompared,
     Bytes,
 }
 
@@ -87,6 +90,8 @@ pub(crate) enum Reason {
     CoverageLost,
     NamespaceChanged,
     NoCurrentWatch,
+    BudgetReached,
+    IncompleteObservation,
 }
 
 /// Latest known details. Paths are root-relative display positions, with no provider identifiers.

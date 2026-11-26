@@ -39,7 +39,7 @@ fn failed_round_keeps_previous_snapshot_and_recovery_republishes_evidence() {
     let cancelled = CancellationToken::new();
     cancelled.cancel();
     assert!(observer.poll(&cancelled, None).is_err());
-    assert_eq!(observer.unavailable().len(), 1);
+    assert_eq!(observer.unavailable(None).len(), 1);
     let (again, _) = observer.poll(&token, None).unwrap();
     assert_eq!(kind(&again[0]), ObservationKind::RecheckRequired);
 }
@@ -55,7 +55,7 @@ fn absence_is_emitted_only_after_a_complete_recovery_round() {
     failed.cancel();
     assert!(observer.poll(&failed, None).is_err());
     std::fs::remove_file(s.0.join("file")).unwrap();
-    assert!(observer.unavailable().iter().all(|observation|matches!(observation,Observation::Local {data,..} if data.state==FileState::Unavailable)));
+    assert!(observer.unavailable(None).iter().all(|observation|matches!(observation,Observation::Local {data,..} if data.state==FileState::Unavailable)));
     let (recovered, coverage) = observer.poll(&token, None).unwrap();
     assert_eq!(coverage, ObservationCoverage::Complete);
     assert_eq!(recovered.len(), 1);

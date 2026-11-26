@@ -2,10 +2,7 @@
 pub(super) mod activity;
 mod watch;
 
-use super::{
-    remote::interfaces::CancellationToken, LocalObservation, LocalObservationSource, Observation,
-    ObservationCoverage,
-};
+use super::{remote::interfaces::CancellationToken, LocalObservation, ObservationCoverage};
 use crate::models::*;
 use sha2::{Digest, Sha256};
 use std::{
@@ -737,23 +734,5 @@ fn access(path: &StdPath, mode: i32) -> Evidence<bool> {
     }
 }
 
-impl ScanResult {
-    pub(crate) fn observations(&self, source: LocalObservationSource) -> Vec<Observation> {
-        self.entries
-            .values()
-            .cloned()
-            .map(|mut data| {
-                if let Some(event) = &mut data.event {
-                    event.origin = if source == LocalObservationSource::Scanner {
-                        ObservationOrigin::Scanner
-                    } else {
-                        ObservationOrigin::Local
-                    };
-                }
-                Observation::Local { source, data }
-            })
-            .collect()
-    }
-}
 #[cfg(test)]
 pub(in crate::detectors) mod tests;

@@ -134,3 +134,60 @@ fn counts(metrics: Traversal) -> Details {
         ..Details::default()
     }
 }
+
+#[derive(Clone, Copy)]
+pub(super) enum Step {
+    Materialize,
+    Compare,
+    Recover(Reason),
+}
+
+pub(super) struct Batch {
+    guard: Option<ActivityGuard>,
+    unit: Unit,
+    total: usize,
+    processed: usize,
+    reason: Option<Reason>,
+}
+
+impl Batch {
+    pub(super) fn new(parent: Option<&ActivityGuard>, step: Step, total: usize) -> Self {
+        let (phase, unit, reason) = match step {
+            Step::Materialize => (Phase::BuildObservations, Unit::Observations, None),
+            Step::Compare => (Phase::CompareSnapshots, Unit::ItemsCompared, None),
+            Step::Recover(reason) => (Phase::Recover, Unit::Observations, Some(reason)),
+        };
+        Self {
+            guard: parent.map(|parent| {
+                parent.child(phase, State::Running, batch_details(unit, 0, total, reason))
+            }),
+            unit,
+            total,
+            processed: 0,
+            reason,
+        }
+    }
+
+    pub(super) fn advance(&mut self) {
+        if let Some(guard) = &self.guard {
+            self.processed += 1;
+            guard.report(|| batch_details(self.unit, self.processed, self.total, self.reason));
+        }
+    }
+
+    pub(super) fn finish(self) {
+        if let Some(guard) = self.guard {
+            guard.transition(State::Running, || {
+                batch_details(self.unit, self.processed, self.total, self.reason)
+            });
+            guard.finish(State::Complete);
+        }
+    }
+}
+
+fn batch_details(unit: Unit, completed: usize, total: usize, reason: Option<Reason>) -> Details {
+    Details {
+        reason,
+        ..Details::count(Progress::new(unit, completed, Some(total)))
+    }
+}
