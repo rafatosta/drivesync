@@ -10,5 +10,5 @@ pub(crate) use models::{
 pub(crate) mod local;
 pub(crate) mod scanner;
 
-mod progress;
-pub(crate) use progress::ProgressReporter;
+pub(super) mod progress;
+pub(crate) use progress::{ProgressReporter, ScanProgress};

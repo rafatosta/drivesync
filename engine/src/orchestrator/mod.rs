@@ -4,10 +4,13 @@ mod evidence;
 mod models;
 mod operations;
 mod refresh;
+pub(crate) use crate::detectors::activity::Source;
 use crate::{
     accounts::Accounts,
     detectors::{
-        activity::Scope as DetectorScope, context::File, observation::ObservationCoverage,
+        activity::{ActivityChannel, ActivitySession, ScanUpdate, Scope as DetectorScope},
+        context::File,
+        observation::{ObservationCoverage, ScanProgress},
     },
     inventory::{models::WriteStatus, Inventory, InventoryConfig},
     models::{DateTime, Evidence, Id},
@@ -41,14 +44,14 @@ pub(crate) struct OrchestratorHandle {
     stop: watch::Sender<bool>,
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
-    telemetry: watch::Sender<SynchronizationStatus>,
-    detector_scope: DetectorScope,
+    detector_activities: Arc<ActivityChannel>,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
 }
 impl Drop for OrchestratorHandle {
     fn drop(&mut self) {
+        self.detector_activities.close();
         self.stop.send_replace(true);
     }
 }
@@ -86,6 +89,9 @@ impl OrchestratorHandle {
             receiver: self.status.clone(),
         }
     }
+    pub(crate) fn detector_session(&self, source: Source) -> ActivitySession {
+        self.detector_activities.open(source)
+    }
     /// Display-only source telemetry bypasses the execution queue and never grants coverage.
     pub(crate) fn scan_progress(
         &self,
@@ -94,30 +100,10 @@ impl OrchestratorHandle {
         items: u64,
         pages: u64,
     ) {
-        self.telemetry.send_if_modified(|status| {
-            if matches!(
-                status.state,
-                SynchronizationState::Stopped | SynchronizationState::Failed
-            ) {
-                return false;
-            }
-            let scan = SynchronizationScan {
-                state: SynchronizationScanState::Reading,
-                path,
-                items,
-                pages,
-                retry_at: None,
-            };
-            let slot = match source {
-                Source::Local => &mut status.work.local,
-                Source::Remote => &mut status.work.remote,
-            };
-            if slot.as_ref() == Some(&scan) {
-                return false;
-            }
-            *slot = Some(scan);
-            true
-        });
+        self.detector_activities.scan_legacy(
+            source,
+            ScanUpdate::Progress(ScanProgress { path, items, pages }),
+        );
     }
     pub(crate) fn scan_state(
         &self,
@@ -125,41 +111,8 @@ impl OrchestratorHandle {
         state: SynchronizationScanState,
         items: Option<u64>,
     ) {
-        self.telemetry.send_modify(|status| {
-            if matches!(
-                status.state,
-                SynchronizationState::Stopped | SynchronizationState::Failed
-            ) {
-                return;
-            }
-            let slot = match source {
-                Source::Local => &mut status.work.local,
-                Source::Remote => &mut status.work.remote,
-            };
-            let scan = slot.get_or_insert(SynchronizationScan {
-                state,
-                path: None,
-                items: 0,
-                pages: 0,
-                retry_at: None,
-            });
-            if state == SynchronizationScanState::Reading && scan.state != state {
-                scan.path = None;
-                scan.items = 0;
-                scan.pages = 0;
-            }
-            scan.state = state;
-            if let Some(items) = items {
-                scan.items = items;
-            }
-            scan.retry_at = (state == SynchronizationScanState::RetryScheduled).then(|| DateTime {
-                unix_millis: timestamp().unix_millis
-                    + match source {
-                        Source::Local => 2_000,
-                        Source::Remote => 15_000,
-                    },
-            });
-        });
+        self.detector_activities
+            .scan_legacy(source, ScanUpdate::State(state, items));
     }
     /// Backpressure keeps observations bounded; a stopped worker rejects new work.
     pub(crate) async fn submit(&self, file: File) -> Result<(), SynchronizationErrorKind> {
@@ -210,6 +163,7 @@ impl OrchestratorHandle {
     }
     /// Stops accepting work, drains only the currently executing step, and waits for termination.
     pub(crate) async fn stop(&self) -> SynchronizationStatus {
+        self.detector_activities.close();
         self.stop.send_replace(true);
         let mut finished = self.finished.clone();
         while !*finished.borrow_and_update() {
@@ -311,10 +265,29 @@ fn start_guarded(
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
     });
-    let supervisor_status = status.clone();
+    let detector_activities = ActivityChannel::new(DetectorScope {
+        account: config.roots.account_id.clone(),
+        root: config.sync_root_id.clone(),
+    });
+    let activity_inbox = detector_activities.clone();
     tokio::spawn(async move {
-        let status = supervisor_status;
-        if task.await.is_err() {
+        let mut task = task;
+        let outcome = loop {
+            tokio::select! {
+                biased;
+                result = &mut task => break result,
+                _ = activity_inbox.changed() => {
+                    let scans = activity_inbox.take_scan_changes();
+                    status.send_if_modified(|status| {
+                        !matches!(status.state, SynchronizationState::Stopped | SynchronizationState::Failed)
+                            && status.account_id == activity_inbox.scope.account
+                            && scans.project(&mut status.work)
+                    });
+                }
+            }
+        };
+        activity_inbox.close();
+        if outcome.is_err() {
             let mut failure = status.borrow().clone();
             failure.state = SynchronizationState::Failed;
             failure.activity = SynchronizationActivity::None;
@@ -328,25 +301,16 @@ fn start_guarded(
         finished.send_replace(true);
     });
     OrchestratorHandle {
-        detector_scope: DetectorScope {
-            account: config.roots.account_id.clone(),
-            root: config.sync_root_id.clone(),
-        },
         config,
         files,
         stop,
         finished: finished_rx,
         status: status_rx,
-        telemetry: status,
+        detector_activities,
         capture_epoch,
         local_refresh,
         remote_refresh,
     }
-}
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Source {
-    Local,
-    Remote,
 }
 enum Command {
     File(Box<File>),

@@ -942,8 +942,10 @@ async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage()
     handle.submit(changed_file()).await.unwrap();
     pause.started.notified().await;
     let operation = handle.status().current_operation.unwrap().id;
+    let mut subscription = handle.subscribe();
+    subscription.current();
     handle.scan_progress(Source::Remote, Some("Documents/Teaching".into()), 340, 4);
-    let status = handle.status();
+    let status = subscription.changed().await.unwrap();
     assert_eq!(status.account_id, config().roots.account_id);
     assert_eq!(status.current_operation.unwrap().id, operation);
     assert_eq!(status.work.remote.as_ref().unwrap().items, 340);
@@ -957,7 +959,15 @@ async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage()
         SynchronizationScanState::RetryScheduled,
         None,
     );
-    assert!(handle.status().work.remote.unwrap().retry_at.is_some());
+    assert!(subscription
+        .changed()
+        .await
+        .unwrap()
+        .work
+        .remote
+        .unwrap()
+        .retry_at
+        .is_some());
     pause.release.notify_one();
     let stopped = handle.stop().await;
     assert_eq!(stopped.work, SynchronizationWork::default());
