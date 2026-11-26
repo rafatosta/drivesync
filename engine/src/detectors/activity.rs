@@ -10,14 +10,11 @@ use diagnostics::{Diagnostics, Event};
 pub(crate) use models::*;
 use std::time::Instant;
 
-use super::progress::{ActivityReporter, Sample};
+use crate::activity::{ActivityReporter, DiagnosticWriter, Sample};
 use crate::synchronization::{SynchronizationScan, SynchronizationScanState, SynchronizationWork};
 use std::{
     collections::BTreeMap,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
 };
 use tokio::sync::Notify;
 
@@ -222,7 +219,7 @@ impl ActivityChannel {
     fn flush_diagnostics(self: &Arc<Self>) {
         // A blocked stderr cannot delay publication or shutdown. One off-thread writer keeps
         // outstanding diagnostic output bounded even when many sessions start and stop.
-        static WRITING: AtomicBool = AtomicBool::new(false);
+        static WRITER: DiagnosticWriter = DiagnosticWriter::new();
         if !self
             .latest
             .lock()
@@ -230,28 +227,19 @@ impl ActivityChannel {
             .diagnostics
             .as_ref()
             .is_some_and(|diagnostics| diagnostics.pending())
-            || WRITING
-                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_err()
         {
             return;
         }
-        struct WriteLease;
-        impl Drop for WriteLease {
-            fn drop(&mut self) {
-                WRITING.store(false, Ordering::Release);
-            }
-        }
-        let lease = WriteLease;
         let channel = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let batch = channel.take_diagnostics();
-            if let Some(batch) = batch {
-                let _ = batch.write(std::io::stderr().lock());
-            }
-            drop(lease);
-            channel.changed.notify_one();
-        });
+        let wake = self.clone();
+        WRITER.spawn(
+            move || {
+                if let Some(batch) = channel.take_diagnostics() {
+                    let _ = batch.write(std::io::stderr().lock());
+                }
+            },
+            move || wake.changed.notify_one(),
+        );
     }
 
     fn take_diagnostics(&self) -> Option<diagnostics::Batch> {

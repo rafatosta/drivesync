@@ -126,3 +126,19 @@ private/public property handling. Unknown incomplete replacements remain blocked
 [Stage 10](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
 
 [Stage 11](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.
+
+## Operations observability
+
+### Instrumentation matrix
+
+| Boundary | Work or wait | Available evidence |
+| --- | --- | --- |
+| Operator admission and preparation | Execution gate, Inventory lease, preconditions, dispatch | Scoped execution and item IDs, normalized action, existing validation result |
+| Inventory and Journal | Intent, checkpoint, effect and confirmation writes | Existing write receipt, recorded revision outcome, known or uncertain effect |
+| Filesystem | Open and identity checks, anonymous staging, directory creation, moves, replacement and publication | Existing descriptor and mutation outcomes, completed copy byte count from `std::io::copy` |
+| Local verification | Hashing regular files and preserved copies | Buffer lengths and existing metadata, SHA-256, integrity result |
+| Remote executor | Session acquisition, metadata, destination, ancestor walks and effect readback | Request/page/item counts from existing calls and collections, validated outcomes |
+| Download | Header/body response, staging writes, size and digest, revalidation | Received, written and hashed byte counts from existing buffers, size from existing evidence |
+| Upload | Session preparation, reads, HTTP submission, acknowledgement and resume | Local reads and contiguous offsets from chunk boundaries and provider receipts |
+| Recovery | Inventory enumeration, per-record validation and reconciliation, resume and confirmation | Original execution IDs, checked records, persisted receipts and recovery issues |
+| Conflicts and trash | Archive copy and verification, retained-content checks and receipts | Bytes already processed by archive loops, existing checkpoint and mutation outcomes |

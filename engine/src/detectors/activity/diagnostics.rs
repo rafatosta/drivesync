@@ -1,8 +1,9 @@
 //! Redacted, bounded diagnostic records. Formatting runs outside producer locks.
 
 use super::{Activity, ActivityId, Origin, Phase, Progress, Reason, Scope, State};
+use crate::activity::Recent;
 use std::{
-    collections::{hash_map::RandomState, VecDeque},
+    collections::hash_map::RandomState,
     hash::BuildHasher,
     io::{self, Write},
     sync::OnceLock,
@@ -56,7 +57,7 @@ impl Counts {
 
 pub(super) struct Diagnostics {
     labels: (u64, u64),
-    records: VecDeque<Record>,
+    records: Recent<Record>,
     pub(super) counts: Counts,
 }
 
@@ -68,7 +69,7 @@ impl Diagnostics {
                 hash.hash_one(&scope.account.0),
                 hash.hash_one(&scope.root.0),
             ),
-            records: VecDeque::with_capacity(CAPACITY),
+            records: Recent::new(CAPACITY),
             counts: Counts::default(),
         }
     }
@@ -100,11 +101,9 @@ impl Diagnostics {
                 return;
             }
         }
-        if self.records.len() == CAPACITY {
-            self.records.pop_front();
+        if self.records.push(record) {
             self.counts.overwritten += 1;
         }
-        self.records.push_back(record);
     }
 
     pub(super) fn pending(&self) -> bool {
@@ -114,7 +113,7 @@ impl Diagnostics {
     pub(super) fn take(&mut self) -> Option<Batch> {
         self.pending().then(|| Batch {
             labels: self.labels,
-            records: self.records.drain(..).collect(),
+            records: self.records.take(),
             counts: std::mem::take(&mut self.counts),
         })
     }

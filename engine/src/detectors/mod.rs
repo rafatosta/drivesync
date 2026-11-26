@@ -3,7 +3,6 @@
 pub(crate) mod activity;
 mod context;
 mod observation;
-mod progress;
 
 use activity::{ActivityChannel, ActivityGuard, Details, Origin, Phase, Scope, State, Wait};
 #[cfg(test)]

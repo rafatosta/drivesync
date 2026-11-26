@@ -1,18 +1,8 @@
 //! Activity types shared at the Detectors boundary.
 
-use crate::models::{AccountId, Path, SyncRootId};
+pub(crate) use crate::activity::{ActivityId, Scope};
+use crate::models::Path;
 use std::time::Instant;
-
-/// Identity of an activity within one Orchestrator lifetime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct ActivityId(pub(crate) u64);
-
-/// Scope fixed by the synchronization instance, independent of functional capture epochs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Scope {
-    pub(crate) account: AccountId,
-    pub(crate) root: SyncRootId,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Origin {

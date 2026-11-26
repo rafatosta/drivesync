@@ -1,0 +1,174 @@
+//! Shared activity sampling, bounded retention and off-thread diagnostic output.
+
+use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex,
+    },
+};
+
+use crate::models::{AccountId, SyncRootId};
+
+/// Identity within one activity inbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ActivityId(pub(crate) u64);
+
+/// Fixed synchronization scope, independent of work generations and capture epochs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Scope {
+    pub(crate) account: AccountId,
+    pub(crate) root: SyncRootId,
+}
+
+pub(crate) const HASH_PROGRESS_MIN: u64 = 1024 * 1024;
+
+const INTERVAL: Duration = Duration::from_millis(200);
+
+/// The receiver uses the sequence to reject samples delivered out of order.
+pub(crate) struct Sample<T> {
+    pub(crate) sequence: u64,
+    pub(crate) at: Instant,
+    pub(crate) value: T,
+    pub(crate) coalesced: u64,
+}
+
+#[derive(Default)]
+struct Sampling {
+    last: Option<Instant>,
+    sequence: u64,
+    coalesced: u64,
+}
+
+#[derive(Default)]
+pub(crate) struct ActivityReporter(Mutex<Sampling>);
+
+impl ActivityReporter {
+    pub(crate) fn sample<T>(
+        &self,
+        immediate: bool,
+        value: impl FnOnce() -> T,
+    ) -> Option<Sample<T>> {
+        let (sequence, at, coalesced) = {
+            let mut sampling = self.0.lock().unwrap();
+            let at = Instant::now();
+            if !immediate && sampling.last.is_some_and(|last| at - last < INTERVAL) {
+                sampling.coalesced += 1;
+                return None;
+            }
+            sampling.last = Some(at);
+            sampling.sequence += 1;
+            (
+                sampling.sequence,
+                at,
+                std::mem::take(&mut sampling.coalesced),
+            )
+        };
+        Some(Sample {
+            sequence,
+            at,
+            value: value(),
+            coalesced,
+        })
+    }
+
+    pub(crate) fn take_coalesced(&self) -> u64 {
+        std::mem::take(&mut self.0.lock().unwrap().coalesced)
+    }
+}
+
+/// A recent-history buffer whose producer never waits for a consumer to make room.
+pub(crate) struct Recent<T> {
+    capacity: usize,
+    entries: VecDeque<T>,
+}
+
+impl<T> Recent<T> {
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            entries: VecDeque::with_capacity(capacity),
+        }
+    }
+
+    pub(crate) fn push(&mut self, entry: T) -> bool {
+        let full = self.entries.len() == self.capacity;
+        if full {
+            self.entries.pop_front();
+        }
+        self.entries.push_back(entry);
+        full
+    }
+
+    pub(crate) fn back_mut(&mut self) -> Option<&mut T> {
+        self.entries.back_mut()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub(crate) fn take(&mut self) -> Vec<T> {
+        self.entries.drain(..).collect()
+    }
+}
+
+/// Bounds outstanding stderr work across scopes even when the output blocks.
+pub(crate) struct DiagnosticWriter(AtomicBool);
+
+impl DiagnosticWriter {
+    pub(crate) const fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+
+    pub(crate) fn spawn(
+        &'static self,
+        write: impl FnOnce() + Send + 'static,
+        wake: impl FnOnce() + Send + 'static,
+    ) {
+        if self
+            .0
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+        struct Lease(&'static AtomicBool);
+        impl Drop for Lease {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Release);
+            }
+        }
+        let lease = Lease(&self.0);
+        tokio::task::spawn_blocking(move || {
+            write();
+            drop(lease);
+            wake();
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn samples_are_sequenced_and_constructed_after_the_sampling_lock_is_released() {
+        let reporter = ActivityReporter::default();
+        let first = reporter
+            .sample(false, || {
+                assert!(reporter.0.try_lock().is_ok());
+                1
+            })
+            .unwrap();
+        reporter.0.lock().unwrap().last = Some(Instant::now() + Duration::from_secs(60));
+        assert!(reporter
+            .sample(false, || panic!("discarded samples should be lazy"))
+            .is_none());
+        let second = reporter.sample(true, || 2).unwrap();
+        assert_eq!((first.sequence, first.value), (1, 1));
+        assert_eq!((second.sequence, second.value), (2, 2));
+        assert!(first.at <= second.at);
+    }
+}

@@ -639,7 +639,7 @@ fn hash(
         None => CachedHash {
             stamp: fingerprint,
             birth_ns,
-            digest: if before.len() >= 1024 * 1024 {
+            digest: if before.len() >= crate::activity::HASH_PROGRESS_MIN {
                 let total = before.len();
                 progress(HashProgress::Start(total));
                 let result = digest(&mut file, cancel, |bytes| {
