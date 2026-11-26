@@ -1,11 +1,16 @@
 # Engine
 
-The Engine currently provides account metadata and authentication workflows, plus provider APIs used by those workflows and remote folder browsing.
+The Engine owns account-scoped synchronization and exposes public application contracts through `drivesync_engine`.
 
 | Module | Responsibility |
 | --- | --- |
-| [Accounts](accounts/README.md) | Persisted account identity and credential lifecycle |
-| [Connection](connection/README.md) | Google sign-in and account connection lifecycle |
-| [Providers](providers/README.md) | Google OAuth and Drive API access |
+| [Accounts](accounts/README.md) | Account identity and credential lifecycle |
+| [Connection](connection/README.md) | Authentication and application lifecycle |
+| [Providers](providers/README.md) | Provider-specific external APIs |
+| [Detectors and Context](../OBSERVATION_SOURCES.md) | Scoped observations and inventory-enriched File models |
+| Inventory | Account-isolated persistent identities, baselines and operation evidence |
+| Analyzer | Pure decisions from File evidence; no I/O |
+| [Orchestrator](../ORCHESTRATOR.md) | Coordinates analysis, execution, recovery and public status |
+| [Operations](../OPERATIONS.md) | Verified effects, preconditions and persistence |
 
-Synchronization implementation and its exclusive data contracts have been removed.
+GTK consumes the public Engine boundary, not private synchronization modules. Observation telemetry is distinct from confirmed effects. Idle does not prove whole-tree convergence.

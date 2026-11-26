@@ -4,13 +4,13 @@ Reconstruction step 7 implements the private `orchestrator::operations` boundary
 The Analyzer and executor share one `Operation` and `OperationPreconditions` contract.
 Operations do not choose synchronization policy or analyze conflicts. Step 8 now wires the
 [Orchestrator and GUI status](ORCHESTRATOR.md); [functional observation producers](OBSERVATION_SOURCES.md) are implemented in step 9.
-[Functional correction Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md) adds metadata-only
+[Functional correction Stage 2](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_2.md) adds metadata-only
 identity registration, explicitly authorized adoption, and nested baseline confirmation.
-[Stage 3](FUNCTIONAL_CORRECTION_STAGE_3.md) persists execution recovery commands and checkpoints
+[Stage 3](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_3.md) persists execution recovery commands and checkpoints
 and reconciles initial creates/transfers before startup admits further work.
-[Stage 4](FUNCTIONAL_CORRECTION_STAGE_4.md) connects initial remote directory/download plans,
+[Stage 4](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_4.md) connects initial remote directory/download plans,
 confirms parent associations before child dispatch, and signals fresh local rounds after publication.
-[Stage 5](FUNCTIONAL_CORRECTION_STAGE_5.md) adds initial local-to-remote planning and guarded
+[Stage 5](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_5.md) adds initial local-to-remote planning and guarded
 continuation of persisted upload sessions from freshly queried server progress. Account database
 leases exclude competing execution/recovery; no expired session is silently replaced.
 
@@ -113,16 +113,16 @@ Automated tests use temporary directories, synthetic authorization and loopback 
 Engine validation in a Devel Flatpak build sandbox is recorded separately in the Stage 2
 report; neither category establishes installed-GUI/package acceptance.
 
-[Stage 6](FUNCTIONAL_CORRECTION_STAGE_6.md) adds verified bound-slot identity refresh for editor
+[Stage 6](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_6.md) adds verified bound-slot identity refresh for editor
 replacement, update-effect recovery, persisted conditional-upload references and canonical
 private/public property handling. Unknown incomplete replacements remain blocked.
 
-[Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) adds pinned, tagged local moves, conditional marked remote moves and read-only recovery for all four location actions. Destination and ancestor changes block confirmation.
+[Stage 7](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_7.md) adds pinned, tagged local moves, conditional marked remote moves and read-only recovery for all four location actions. Destination and ancestor changes block confirmation.
 
-[Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) persists conflict facts and validates revision-bound choices before normal dispatch. Both divergent file contents are privately archived and checkpointed before replacement; directory choices archive locations without replacing descendants. Archive verification is part of uncertain-effect recovery.
+[Stage 8](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_8.md) persists conflict facts and validates revision-bound choices before normal dispatch. Both divergent file contents are privately archived and checkpointed before replacement; directory choices archive locations without replacing descendants. Archive verification is part of uncertain-effect recovery.
 
-[Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) restricts Workspace actions to verified link creation, local metadata updates and baseline confirmation. Remote shortcuts and unsupported native types are refused. Link publication is checkpointed and recovered without uploading its bytes.
+[Stage 9](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_9.md) restricts Workspace actions to verified link creation, local metadata updates and baseline confirmation. Remote shortcuts and unsupported native types are refused. Link publication is checkpointed and recovered without uploading its bytes.
 
-[Stage 10](FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
+[Stage 10](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
 
-[Stage 11](FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.
+[Stage 11](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.

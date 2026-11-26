@@ -80,5 +80,4 @@ na mesma janela. O fixture visual usa um adaptador de pastas e dados de conta
 fictícios; ele não comprova consentimento Google nem portal real.
 
 A validação local de permissões não garante acesso futuro ao portal ou que os
-arquivos já foram sincronizados. A engine atual não possui um processo integrado
-de sincronização; concluir setup não representa sucesso de transferência.
+arquivos já foram sincronizados. Concluir setup não representa sucesso de transferência; a sincronização possui ciclo de vida próprio.

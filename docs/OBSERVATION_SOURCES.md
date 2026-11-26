@@ -2,7 +2,7 @@
 
 Reconstruction step 9 implements Scanner, continuous local observation, and the Google
 RemoteObserver on the existing `Observation -> Context -> File -> Analyzer -> Operations`
-contracts. [Functional correction Stage 1](FUNCTIONAL_CORRECTION_STAGE_1.md) extends the
+contracts. [Functional correction Stage 1](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_1.md) extends the
 original delivery with scoped captures, Inventory enumeration and candidate evidence.
 Execution requests and Inventory schemas are unchanged. Public status also exposes display-only
 collection telemetry, independent of normalized capture evidence. Producers read facts;
@@ -128,7 +128,7 @@ associations from Inventory resolve destination parents in either direction; una
 nested parents remain unresolved until their association is confirmed by adoption or a
 successful initial creation. Only Synced directory parents without active uncertain operations
 resolve child destinations. No source
-or Context writes an association or baseline. [Stage 2](FUNCTIONAL_CORRECTION_STAGE_2.md) now
+or Context writes an association or baseline. [Stage 2](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_2.md) now
 provides Operations-based registration and authorized adoption; ambiguous candidates,
 unresolved moves/destinations and uncertain operations still defer. This step makes observation functional; it does not claim complete
 initial upload/download or full conflict recovery. Local replacement receipts now retain
@@ -143,33 +143,33 @@ The Stage 2 report separately records real test-account source/Engine validation
 Devel Flatpak build sandbox, including three-level adoption and re-opening without duplicate
 identities or baseline rewrites. It does not claim installed GUI or portal acceptance.
 
-[Stage 3](FUNCTIONAL_CORRECTION_STAGE_3.md) separately validates initial-effect recovery in a
+[Stage 3](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_3.md) separately validates initial-effect recovery in a
 new real-account Engine process. It introduces neither the initial synchronization planner nor
 permission to associate preexisting items implicitly.
 
-[Stage 4](FUNCTIONAL_CORRECTION_STAGE_4.md) adds initial remote directory/download plans.
+[Stage 4](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_4.md) adds initial remote directory/download plans.
 Confirmed directory publication wakes the local source immediately; a fresh capture re-evaluates
 remote children without requiring an external filesystem edit or additional remote change.
 
-[Stage 5](FUNCTIONAL_CORRECTION_STAGE_5.md) also wakes remote observation after verified remote
+[Stage 5](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_5.md) also wakes remote observation after verified remote
 creation. Complete collision-free captures prove absence for registered NeverSynced local items
 without a remote ID; partial/unavailable captures cannot authorize a create or upload.
 
-[Stage 6](FUNCTIONAL_CORRECTION_STAGE_6.md) carries pre-collection invalidation epochs. Own effects
+[Stage 6](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_6.md) carries pre-collection invalidation epochs. Own effects
 force current remote recapture, and quiet Changes rounds periodically recapture as well. Cache
 overflow invalidates counterparts and soft item limits grow on retry; hard limits remain explicit
 coverage blockers. Synced-slot replacements require absent old inodes and unchanged remote binary
 evidence, followed by independent Operations validation.
 
-[Stage 7](FUNCTIONAL_CORRECTION_STAGE_7.md) correlates a changed path only with complete captures, a unique persisted incarnation and filesystem birth evidence. Rename permission checks follow the pinned descriptor into the actual directory, including inside Flatpak.
+[Stage 7](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_7.md) correlates a changed path only with complete captures, a unique persisted incarnation and filesystem birth evidence. Rename permission checks follow the pinned descriptor into the actual directory, including inside Flatpak.
 
-[Stage 8](FUNCTIONAL_CORRECTION_STAGE_8.md) permits complete, unambiguous bound-slot replacement evidence to expose simultaneous atomic-editor divergence as a conflict. This never authorizes an overwrite: the selected choice, current filesystem, provider state and original-inode absence are rechecked by Operations.
+[Stage 8](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_8.md) permits complete, unambiguous bound-slot replacement evidence to expose simultaneous atomic-editor divergence as a conflict. This never authorizes an overwrite: the selected choice, current filesystem, provider state and original-inode absence are rechecked by Operations.
 
-[Stage 9](FUNCTIONAL_CORRECTION_STAGE_9.md) applies explicit per-item projection, name and special-file policies. Unsupported entries do not prevent independent supported items from progressing; raw provider names remain distinct from derived local filenames.
+[Stage 9](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_9.md) applies explicit per-item projection, name and special-file policies. Unsupported entries do not prevent independent supported items from progressing; raw provider names remain distinct from derived local filenames.
 
-[Stage 10](FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
+[Stage 10](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_10.md) adds opt-in recoverable trash propagation, conservative empty-folder checks and durable trash recovery. Complete absence alone never authorizes deletion; provider scope exit/access loss and local movement without a retained trash receipt preserve data. Normal startup keeps propagation disabled.
 
-[Stage 11](FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.
+[Stage 11](https://github.com/rafatosta/drivesync/blob/07471f09e771233a8009dc09cc017f7489d249a3/docs/FUNCTIONAL_CORRECTION_STAGE_11.md) records installed and real-account acceptance separately from controlled tests. Writer admission binds filesystem identity across restarts and excludes overlapping/same-provider writers; the public synchronization audit requires complete captured convergence rather than an idle queue. Portal-root and default sandbox-trash limits remain explicit.
 
 ## Display telemetry
 
