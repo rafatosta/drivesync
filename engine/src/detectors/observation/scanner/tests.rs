@@ -118,6 +118,32 @@ fn denied_content_is_explicit_and_cannot_be_a_complete_snapshot() {
 #[test]
 #[ignore = "creates 100001 real local files to measure soft-budget recovery and memory; no Drive access"]
 fn stage11_large_tree_budget_recovers_without_false_absence() {
+    large_tree(None);
+}
+
+#[test]
+#[ignore = "creates 100001 real local files to measure the observed scanner under load"]
+fn large_tree_with_activity_preserves_the_budget_and_coverage() {
+    use crate::detectors::activity::{ActivityChannel, Details, Phase, Scope, Source, State};
+    let channel = ActivityChannel::with_diagnostics(
+        Scope {
+            account: AccountId("fixture".into()),
+            root: SyncRootId("large-tree".into()),
+        },
+        false,
+    );
+    let session = channel.open(Source::Local);
+    let local = session.publisher().begin(
+        Source::Local.origin(),
+        None,
+        Phase::Observe,
+        State::Running,
+        Details::default(),
+    );
+    large_tree(Some(&local));
+}
+
+fn large_tree(activity: Option<&crate::detectors::activity::ActivityGuard>) {
     let s = Sandbox::new();
     let count = 100001usize;
     let create = std::time::Instant::now();
@@ -127,7 +153,7 @@ fn stage11_large_tree_budget_recovers_without_false_absence() {
     println!("created {count} files in {:?}", create.elapsed());
     let mut scanner = Scanner::open(s.0.clone(), SyncRootId("large-tree".into())).unwrap();
     let started = std::time::Instant::now();
-    let partial = scanner.scan(&CancellationToken::new()).unwrap();
+    let partial = scale_scan(&mut scanner, activity);
     assert_eq!(partial.coverage, ObservationCoverage::Partial);
     assert!(partial
         .issues
@@ -141,7 +167,7 @@ fn stage11_large_tree_budget_recovers_without_false_absence() {
     drop(partial);
     assert!(scanner.expand_limit());
     let started = std::time::Instant::now();
-    let complete = scanner.scan(&CancellationToken::new()).unwrap();
+    let complete = scale_scan(&mut scanner, activity);
     assert_eq!(complete.coverage, ObservationCoverage::Complete);
     assert_eq!(complete.entries.len(), count);
     println!(
@@ -154,6 +180,19 @@ fn stage11_large_tree_budget_recovers_without_false_absence() {
             .collect::<Vec<_>>()
             .join("; ")
     );
+}
+
+fn scale_scan(
+    scanner: &mut Scanner,
+    guard: Option<&crate::detectors::activity::ActivityGuard>,
+) -> ScanResult {
+    let cancel = CancellationToken::new();
+    if let Some(guard) = guard {
+        scanner.set_progress(Some(super::super::local::activity::scanner(guard)));
+        scanner.poll(None, &cancel).unwrap()
+    } else {
+        scanner.scan(&cancel).unwrap()
+    }
 }
 
 #[test]
@@ -264,4 +303,115 @@ fn native_events_recheck_dirty_files_and_rebuild_on_directory_changes() {
     assert!(changed_tree
         .entries
         .contains_key(StdPath::new("new-directory")));
+}
+
+#[test]
+fn large_checksum_reports_each_read_before_eof_and_can_be_cancelled_during_hashing() {
+    use std::sync::{Arc, Mutex};
+    let sandbox = Sandbox::new();
+    let total = 2 * 1024 * 1024;
+    std::fs::File::create(sandbox.0.join("large-file"))
+        .unwrap()
+        .set_len(total)
+        .unwrap();
+    let mut scanner = Scanner::open(sandbox.0.clone(), SyncRootId("scope".into())).unwrap();
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let progress = observed.clone();
+    scanner.set_progress(Some(Box::new(move |event| match event {
+        activity::Event::ChecksumStart { path, total } => {
+            assert_eq!(path, StdPath::new("large-file"));
+            progress.lock().unwrap().push((0, total));
+        }
+        activity::Event::ChecksumBytes(bytes) => progress.lock().unwrap().push((1, bytes)),
+        activity::Event::ChecksumEnd(result) => {
+            result.unwrap();
+            progress.lock().unwrap().push((2, 0));
+        }
+        _ => {}
+    })));
+    let result = scanner.poll(None, &CancellationToken::new()).unwrap();
+    assert_eq!(result.coverage, ObservationCoverage::Complete);
+    let bytes = observed.lock().unwrap();
+    assert_eq!(bytes.first(), Some(&(0, total)));
+    assert_eq!(bytes[1], (1, 65536));
+    assert!(bytes
+        .windows(2)
+        .filter(|pair| pair[0].0 == 1 && pair[1].0 == 1)
+        .all(|pair| pair[0].1 < pair[1].1));
+    assert_eq!(bytes[bytes.len() - 2], (1, total));
+    assert_eq!(bytes.last(), Some(&(2, 0)));
+    assert_eq!(
+        result.entries[&PathBuf::from("large-file")].checksum,
+        Evidence::Known(Checksum {
+            algorithm: "sha256".into(),
+            value: format!("{:x}", Sha256::digest(vec![0; total as usize])),
+        })
+    );
+
+    let cancel = CancellationToken::new();
+    let inside_read = cancel.clone();
+    scanner.set_progress(Some(Box::new(move |event| match event {
+        activity::Event::ChecksumBytes(bytes) => {
+            assert!(bytes < total);
+            inside_read.cancel();
+        }
+        activity::Event::ChecksumEnd(result) => assert_eq!(result, Err(ScanError::Cancelled)),
+        _ => {}
+    })));
+    scanner.hashes.take();
+    assert!(matches!(
+        scanner.poll(None, &cancel),
+        Err(ScanError::Cancelled)
+    ));
+}
+
+#[test]
+#[ignore = "benchmarks a 64 MiB SHA-256 scan in the local test fixture"]
+fn benchmark_checksum_with_optional_activity() {
+    use crate::detectors::activity::{ActivityChannel, Details, Phase, Scope, Source, State};
+    let sandbox = Sandbox::new();
+    let total = 64 * 1024 * 1024;
+    std::fs::File::create(sandbox.0.join("large-file"))
+        .unwrap()
+        .set_len(total)
+        .unwrap();
+    let scope = SyncRootId("benchmark-checksum".into());
+    let channel = ActivityChannel::with_diagnostics(
+        Scope {
+            account: AccountId("fixture".into()),
+            root: scope.clone(),
+        },
+        false,
+    );
+    let session = channel.open(Source::Local);
+    let guard = session.publisher().begin(
+        Source::Local.origin(),
+        None,
+        Phase::Observe,
+        State::Running,
+        Details::default(),
+    );
+    let observed = std::env::var_os("DRIVESYNC_BENCH_ACTIVITY").is_some_and(|value| value == "1");
+    let mut scanner = Scanner::open(sandbox.0.clone(), scope).unwrap();
+    let start = Instant::now();
+    let result = scale_scan(&mut scanner, observed.then_some(&guard));
+    assert_eq!(result.coverage, ObservationCoverage::Complete);
+    assert!(matches!(
+        result.entries[&PathBuf::from("large-file")].checksum,
+        Evidence::Known(_)
+    ));
+    println!(
+        "checksum bytes={total} observed={observed} duration={:?} {}",
+        start.elapsed(),
+        peak_memory()
+    );
+}
+
+pub(in crate::detectors) fn peak_memory() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .unwrap()
+        .lines()
+        .find(|line| line.starts_with("VmHWM:"))
+        .unwrap()
+        .to_owned()
 }

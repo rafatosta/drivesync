@@ -1128,3 +1128,50 @@ fn equivalent_complete_capture_refreshes_provenance_without_rebuilding_items() {
     assert_ne!(third[0].registration_id, second[0].registration_id);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn large_context_batch_reports_real_progress_and_keeps_file_evidence() {
+    use crate::detectors::activity::{ActivityChannel, Details, Origin, Phase, Scope, State};
+    let (context, directory) = context();
+    let total = 1024;
+    let entries = (0..total)
+        .map(|index| local(&format!("private-entry-{index:04}"), index + 2000, true))
+        .collect();
+    let capture = round(
+        &context,
+        1,
+        ObservationCoverage::Complete,
+        CaptureEntries::Local(entries),
+    );
+    let channel = ActivityChannel::with_diagnostics(
+        Scope {
+            account: context.config.account_id.clone(),
+            root: context.config.sync_root_id.clone(),
+        },
+        true,
+    );
+    let scope = channel.shared().begin(
+        Origin::Shared,
+        None,
+        Phase::Contextualize,
+        State::Running,
+        Details::default(),
+    );
+    let files = context
+        .consolidate_observed(Observation::Capture(Box::new(capture)), &scope)
+        .unwrap();
+    assert_eq!(files.len(), total as usize);
+    assert!(files.iter().all(|file| {
+        file.observations.local_coverage == ObservationCoverage::Complete
+            && file.observations.remote_coverage == ObservationCoverage::Unavailable
+            && matches!(file.local.identity, Evidence::Known(_))
+    }));
+    let log = channel.inbox().test_diagnostics();
+    assert!(log.lines().any(|line| line
+        .contains("phase=Contextualize event=Finished state=Complete")
+        && line.contains("Observations=1024/1024 Queries=1024")));
+    assert!(!log.contains("private-entry-"));
+    scope.finish(State::Complete);
+    assert!(channel.inbox().current().is_empty());
+    std::fs::remove_dir_all(directory).unwrap();
+}

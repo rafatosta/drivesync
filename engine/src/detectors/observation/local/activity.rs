@@ -12,7 +12,7 @@ use crate::{
 };
 use std::cell::RefCell;
 
-pub(super) fn scanner(parent: &ActivityGuard) -> Reporter {
+pub(in crate::detectors::observation) fn scanner(parent: &ActivityGuard) -> Reporter {
     let traversal = RefCell::new(Some(parent.child(
         Phase::Traverse,
         State::Running,

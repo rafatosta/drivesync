@@ -70,6 +70,7 @@ mod tests {
                 1
             })
             .unwrap();
+        reporter.0.lock().unwrap().last = Some(Instant::now() + Duration::from_secs(60));
         assert!(reporter
             .sample(false, || panic!("discarded samples should be lazy"))
             .is_none());

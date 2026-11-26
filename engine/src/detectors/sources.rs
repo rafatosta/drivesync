@@ -28,7 +28,6 @@ use crate::{
 use std::{
     future::{poll_fn, Future},
     sync::{Arc, Mutex},
-    task::Poll,
     time::Duration,
 };
 use tokio::{sync::RwLock, task::JoinHandle};
@@ -240,23 +239,17 @@ async fn deliver_files(
     let progress = |sent| Details::count(Progress::new(Unit::Files, sent, Some(total)));
     let batch = delivery.child(Phase::Deliver, State::Running, progress(0));
     for (sent, file) in files.into_iter().enumerate() {
-        let mut admission = std::pin::pin!(handle.submit(file));
-        let mut waited = false;
-        let submit = poll_fn(|cx| {
-            let result = admission.as_mut().poll(cx);
-            if result == Poll::Pending && !waited {
-                waited = true;
-                batch.transition(State::Waiting(Wait::Queue), || progress(sent));
-            }
-            result
+        let submit = track_admission(handle.submit(file), || {
+            batch.transition(State::Waiting(Wait::Queue), || progress(sent));
         });
-        tokio::select! {
+        let (result, waited) = tokio::select! {
             biased;
             _ = cancelled(cancel) => return false,
-            result = submit => if result.is_err() {
-                batch.finish(State::Failed);
-                return false;
-            }
+            result = submit => result,
+        };
+        if result.is_err() {
+            batch.finish(State::Failed);
+            return false;
         }
         if waited {
             batch.transition(State::Running, || progress(sent + 1));
@@ -268,6 +261,22 @@ async fn deliver_files(
     batch.finish(State::Complete);
     true
 }
+async fn track_admission<T>(request: impl Future<Output = T>, on_wait: impl FnOnce()) -> (T, bool) {
+    let mut request = std::pin::pin!(request);
+    let mut on_wait = Some(on_wait);
+    let result = poll_fn(|cx| {
+        let result = request.as_mut().poll(cx);
+        if result.is_pending() {
+            if let Some(wait) = on_wait.take() {
+                wait();
+            }
+        }
+        result
+    })
+    .await;
+    (result, on_wait.is_none())
+}
+
 async fn sleep(duration: Duration, cancel: &CancellationToken) {
     tokio::select! {_=cancelled(cancel)=>{},_=tokio::time::sleep(duration)=>{}}
 }
@@ -737,4 +746,54 @@ fn capture(
         observed_at: super::observation::scanner::now(),
         entries,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detectors::activity::{ActivityChannel, Scope};
+
+    #[tokio::test]
+    async fn delivery_reports_real_queue_backpressure_and_cancellation_drops_admission() {
+        let channel = ActivityChannel::with_diagnostics(
+            Scope {
+                account: AccountId("account".into()),
+                root: SyncRootId("root".into()),
+            },
+            true,
+        );
+        let session = channel.open(Source::Local);
+        let batch = session.publisher().begin(
+            Source::Local.origin(),
+            None,
+            Phase::Deliver,
+            State::Running,
+            Details::default(),
+        );
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        sender.try_send("already queued").unwrap();
+        let mut admission = Box::pin(track_admission(sender.send("pending"), || {
+            batch.transition(State::Waiting(Wait::Queue), || {
+                Details::count(Progress::new(Unit::Files, 1, Some(2)))
+            });
+        }));
+        tokio::select! {
+            biased;
+            _ = &mut admission => panic!("full queue unexpectedly admitted work"),
+            _ = std::future::ready(()) => {},
+        }
+        let active = channel.inbox().current().pop().unwrap();
+        assert_eq!(active.state, State::Waiting(Wait::Queue));
+        assert_eq!(active.details.progress[0].unwrap().completed, 1);
+        assert_eq!(active.details.progress[0].unwrap().total, Some(2));
+
+        drop(admission);
+        drop(batch);
+        assert_eq!(receiver.recv().await, Some("already queued"));
+        assert!(receiver.try_recv().is_err());
+        assert!(channel.inbox().current().is_empty());
+        let log = channel.inbox().test_diagnostics();
+        assert!(log.contains("event=Transition state=Waiting(Queue)"));
+        assert!(log.contains("event=Finished state=Cancelled"));
+    }
 }

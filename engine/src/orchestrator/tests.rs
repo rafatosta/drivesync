@@ -900,6 +900,17 @@ async fn repeated_item_wait_keeps_its_age_and_exposes_missing_attributes() {
     let status = worker.status.borrow().clone();
     let pending = status.pending.unwrap();
     assert_eq!(pending.since.unix_millis, 123);
+    let inbox = ActivityInbox::test_scope(crate::detectors::activity::Scope {
+        account: config().roots.account_id,
+        root: config().sync_root_id,
+    });
+    let telemetry = inbox.test_source(Source::Remote);
+    telemetry.test_progress(Some("current-folder".into()), 30, 2);
+    worker.status.send_modify(|latest| {
+        inbox.project(&mut latest.work);
+    });
+    assert_eq!(worker.status.borrow().pending.as_ref(), Some(&pending));
+    assert_eq!(worker.status.borrow().work.analysis, status.work.analysis);
     assert!(pending.missing.contains(&SynchronizationMissingEvidence {
         source: SynchronizationVerificationSource::Remote,
         attribute: SynchronizationAttribute::Trashed,
@@ -941,24 +952,48 @@ async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage()
     );
     handle.submit(changed_file()).await.unwrap();
     pause.started.notified().await;
-    let operation = handle.status().current_operation.unwrap().id;
+    let paused = handle.status();
+    let operation = paused.current_operation.unwrap().id;
+    let analysis = paused.work.analysis.unwrap();
     let mut subscription = handle.subscribe();
     subscription.current();
-    handle.detector_activities.test_scan(340, 4);
-    let status = subscription.changed().await.unwrap();
+    let remote = handle.detector_activities.test_source(Source::Remote);
+    let local = handle.detector_activities.test_source(Source::Local);
+    remote.test_progress(Some("Documents/Teaching".into()), 340, 4);
+    remote.test_retry();
+    let status = tokio::time::timeout(std::time::Duration::from_secs(2), subscription.changed())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(status.account_id, config().roots.account_id);
     assert_eq!(status.current_operation.unwrap().id, operation);
-    assert_eq!(status.work.remote.as_ref().unwrap().items, 340);
+    assert_eq!(status.work.analysis.as_ref(), Some(&analysis));
+    let scan = status.work.remote.unwrap();
+    assert_eq!(scan.state, SynchronizationScanState::RetryScheduled);
+    assert_eq!((scan.items, scan.pages), (340, 4));
     assert_eq!(
-        status.work.remote.as_ref().unwrap().path.as_deref(),
+        scan.path.as_deref(),
         Some(std::path::Path::new("Documents/Teaching"))
     );
     assert!(status.verification.is_none());
-    assert!(status.work.remote.unwrap().retry_at.is_some());
+    assert!(scan.retry_at.is_some());
+    let retry_at = scan.retry_at;
+
+    local.test_progress(Some("local/current".into()), 42, 0);
+    let status = tokio::time::timeout(std::time::Duration::from_secs(2), subscription.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    let local_scan = status.work.local.unwrap();
+    assert_eq!(local_scan.state, SynchronizationScanState::Reading);
+    assert_eq!((local_scan.items, local_scan.pages), (42, 0));
+    assert_eq!(status.work.remote.unwrap().retry_at, retry_at);
+    assert_eq!(status.work.analysis, Some(analysis));
+    assert!(status.verification.is_none());
     pause.release.notify_one();
     let stopped = handle.stop().await;
     assert_eq!(stopped.work, SynchronizationWork::default());
     assert!(stopped.pending.is_none());
-    handle.detector_activities.test_scan(1, 0);
+    remote.test_progress(Some("late".into()), 1, 0);
     assert_eq!(handle.status().work, SynchronizationWork::default());
 }

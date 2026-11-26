@@ -142,3 +142,44 @@ impl Batch<'_> {
         details
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::detectors::activity::{ActivityChannel, Origin, Scope};
+
+    #[test]
+    fn a_context_batch_exposes_intermediate_progress_while_it_is_active() {
+        let channel = ActivityChannel::with_diagnostics(
+            Scope {
+                account: crate::models::AccountId("account".into()),
+                root: crate::models::SyncRootId("root".into()),
+            },
+            false,
+        );
+        let root = channel.shared().begin(
+            Origin::Shared,
+            None,
+            Phase::Contextualize,
+            State::Running,
+            Details::default(),
+        );
+        let queries = Cell::new(0);
+        let trace = Trace::new(&root).count_lookups(&queries);
+        let mut batch = trace.batch(Work::Build, 1024);
+        trace.lookup(|| ());
+        batch.advance();
+        let active = channel.inbox().current();
+        let details = &active.last().unwrap().details;
+        assert_eq!(
+            details.progress[0],
+            Some(Progress::new(Unit::Observations, 1, Some(1024)))
+        );
+        assert_eq!(
+            details.progress[1],
+            Some(Progress::new(Unit::Queries, 1, None))
+        );
+        batch.finish();
+        assert_eq!(channel.inbox().current().len(), 1);
+    }
+}

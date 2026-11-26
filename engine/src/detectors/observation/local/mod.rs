@@ -9,7 +9,7 @@ use crate::{
     models::*,
 };
 use activity::{Batch, Step};
-mod activity;
+pub(super) mod activity;
 use std::collections::BTreeMap;
 /// Retains only the last complete snapshot. Partial rounds cannot produce removal evidence.
 pub(crate) struct LocalObserver {

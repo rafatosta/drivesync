@@ -858,3 +858,226 @@ async fn paginated_progress_reports_scoped_folder_names_without_publishing_parti
     assert_eq!(scan.path.as_deref(), Some(std::path::Path::new("Teaching")));
     assert_eq!((scan.items, scan.pages), (1, 2));
 }
+
+#[tokio::test]
+async fn an_outstanding_provider_call_is_visible_and_cancellation_retires_it() {
+    use crate::detectors::activity::{ActivityChannel, Details, Phase, Scope, Source, State, Wait};
+    let mut deferred = Reply::json(200, r#"{"startPageToken":"private-cursor"}"#);
+    deferred.delay = Duration::from_secs(1);
+    let server = Server::start(vec![deferred]);
+    let observer = observer(&server);
+    let channel = ActivityChannel::with_diagnostics(
+        Scope {
+            account: config().account_id,
+            root: config().sync_root_id,
+        },
+        true,
+    );
+    let remote = channel.open(Source::Remote);
+    let collection = remote.publisher().begin(
+        Source::Remote.origin(),
+        None,
+        Phase::Collect,
+        State::Running,
+        Details::default(),
+    );
+    let token = CancellationToken::new();
+    let auth = session();
+    let mut call = observer.observe(
+        request(RemoteObserveMode::Initial, 1),
+        &auth,
+        &token,
+        RemoteActivity::new(&collection),
+    );
+    tokio::select! {
+        biased;
+        _ = &mut call => panic!("delayed checkpoint returned prematurely"),
+        _ = std::future::ready(()) => {},
+    }
+    assert!(channel.inbox().current().iter().any(|activity| {
+        activity.phase == Phase::Checkpoint && activity.state == State::Waiting(Wait::Provider)
+    }));
+    token.cancel();
+    assert_eq!(call.await, Err(RemoteObserverError::Cancelled));
+    collection.finish(State::Cancelled);
+    assert!(channel.inbox().current().is_empty());
+    let log = channel.inbox().test_diagnostics();
+    assert!(log.contains("phase=Checkpoint event=Started state=Waiting(Provider)"));
+    assert!(log.contains("phase=Checkpoint event=Finished state=Cancelled"));
+    assert!(!log.contains("private-cursor"));
+    assert!(!log.contains("synthetic"));
+}
+
+#[tokio::test]
+async fn incremental_pages_track_actual_changes_across_rounds_and_project_round_pages() {
+    use crate::{
+        detectors::activity::{ActivityChannel, Details, Phase, Scope, Source, State, Unit, Wait},
+        synchronization::SynchronizationWork,
+    };
+    let server = Server::start(vec![
+        Reply::json(200, r#"{"startPageToken":"private-start"}"#),
+        root(),
+        Reply::json(
+            200,
+            r#"{"files":[{"id":"one","name":"private-file","parents":["root"],"mimeType":"text/plain","version":"1","sha256Checksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","trashed":false},{"id":"two","name":"private-file-two","parents":["root"],"mimeType":"text/plain","version":"1","sha256Checksum":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","trashed":false}],"incompleteSearch":false}"#,
+        ),
+        root(),
+        root(),
+        Reply::json(
+            200,
+            r#"{"changes":[{"changeType":"file","removed":false,"fileId":"one","file":{"id":"one","name":"private-file","parents":["root"],"mimeType":"text/plain","version":"2","sha256Checksum":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","trashed":false}}],"nextPageToken":"private-page"}"#,
+        ),
+        root(),
+        Reply::json(200, r#"{"changes":[],"newStartPageToken":"private-end"}"#),
+    ]);
+    let observer = observer(&server);
+    let auth = session();
+    let token = CancellationToken::new();
+    observer
+        .observe(
+            request(RemoteObserveMode::Initial, 1),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
+        .await
+        .unwrap();
+    let channel = ActivityChannel::with_diagnostics(
+        Scope {
+            account: config().account_id,
+            root: config().sync_root_id,
+        },
+        true,
+    );
+    let remote = channel.open(Source::Remote);
+    let collection = remote.publisher().begin(
+        Source::Remote.origin(),
+        None,
+        Phase::Collect,
+        State::Running,
+        Details::default(),
+    );
+    let activity = RemoteActivity::new(&collection);
+    let first = observer
+        .observe(
+            request(RemoteObserveMode::Incremental, 1),
+            &auth,
+            &token,
+            activity,
+        )
+        .await
+        .unwrap();
+    assert!(first.has_more);
+    assert!(first.observations.is_empty());
+    assert_eq!(first.coverage, ObservationCoverage::Partial);
+    collection.set_state(State::Waiting(Wait::Continuation));
+    let inbox = channel.inbox();
+    let before = inbox.current().pop().unwrap();
+    assert_eq!(before.state, State::Waiting(Wait::Continuation));
+    let second = observer
+        .observe(
+            request(RemoteObserveMode::Incremental, 1),
+            &auth,
+            &token,
+            activity,
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.coverage, ObservationCoverage::Complete);
+    assert_eq!(second.observations.len(), 2);
+    let after = inbox.current().pop().unwrap();
+    assert_eq!(before.id, after.id);
+    assert!(after.sequence > before.sequence);
+    let counted = |unit| {
+        after
+            .details
+            .progress
+            .iter()
+            .flatten()
+            .find(|metric| metric.unit == unit)
+            .copied()
+            .unwrap()
+    };
+    assert_eq!(counted(Unit::PagesReceived).completed, 2);
+    assert_eq!(counted(Unit::Changes).completed, 1);
+    assert_eq!(counted(Unit::SnapshotItems).completed, 2);
+    assert_eq!(counted(Unit::PagesReceived).total, None);
+    let mut work = SynchronizationWork::default();
+    inbox.project(&mut work);
+    let legacy = work.remote.unwrap();
+    assert_eq!((legacy.items, legacy.pages), (2, 1));
+    collection.finish(State::Complete);
+    let log = inbox.test_diagnostics();
+    assert!(log.contains("Changes=1 SnapshotItems=2"));
+    assert!(!log.contains("private-"));
+}
+
+#[tokio::test]
+#[ignore = "benchmarks 6,400 synthetic Google entries on loopback"]
+async fn benchmark_remote_capture_with_optional_activity() {
+    use crate::detectors::activity::{ActivityChannel, Details, Phase, Scope, Source, State};
+    let page_count = 64;
+    let items_per_page = 100;
+    let mut replies = vec![Reply::json(200, r#"{"startPageToken":"start"}"#), root()];
+    for page in 0..page_count {
+        let files = (0..items_per_page).map(|index| {
+            let name = format!("file-{page}-{index}");
+            serde_json::json!({"id": name, "name": name, "mimeType":"text/plain","parents":["root"],"trashed":false})
+        }).collect::<Vec<_>>();
+        let mut response = serde_json::json!({"files":files,"incompleteSearch":false});
+        if page + 1 != page_count {
+            response["nextPageToken"] = serde_json::Value::String(format!("page-{}", page + 1));
+        }
+        replies.push(Reply::json(200, &response.to_string()));
+    }
+    replies.push(root());
+
+    let server = Server::start(replies);
+    let observer = observer(&server);
+    let channel = ActivityChannel::with_diagnostics(
+        Scope {
+            account: config().account_id,
+            root: config().sync_root_id,
+        },
+        false,
+    );
+    let session = channel.open(Source::Remote);
+    let collection = session.publisher().begin(
+        Source::Remote.origin(),
+        None,
+        Phase::Collect,
+        State::Running,
+        Details::default(),
+    );
+    let observed = std::env::var_os("DRIVESYNC_BENCH_ACTIVITY").is_some_and(|value| value == "1");
+    let diagnostics = if observed {
+        RemoteActivity::new(&collection)
+    } else {
+        RemoteActivity::default()
+    };
+    let auth = self::session();
+    let token = CancellationToken::new();
+    let start = Instant::now();
+    let mut mode = RemoteObserveMode::Initial;
+    let result = loop {
+        let result = observer
+            .observe(request(mode, 16), &auth, &token, diagnostics)
+            .await
+            .unwrap();
+        if !result.has_more {
+            break result;
+        }
+        mode = RemoteObserveMode::Incremental;
+        assert_eq!(result.coverage, ObservationCoverage::Partial);
+        assert!(result.observations.is_empty());
+    };
+    assert_eq!(result.coverage, ObservationCoverage::Complete);
+    assert_eq!(result.observations.len(), page_count * items_per_page);
+    assert_eq!(server.requests.lock().unwrap().len(), page_count + 3);
+    println!(
+        "remote pages={page_count} items={} observed={observed} duration={:?} {}",
+        result.observations.len(),
+        start.elapsed(),
+        super::super::super::scanner::tests::peak_memory()
+    );
+}

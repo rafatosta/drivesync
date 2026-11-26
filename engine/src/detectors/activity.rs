@@ -2,6 +2,8 @@
 
 mod diagnostics;
 mod models;
+#[cfg(test)]
+mod tests;
 
 use crate::models::Path;
 use diagnostics::{Diagnostics, Event};
@@ -137,7 +139,7 @@ impl ActivityChannel {
         )
     }
 
-    fn with_diagnostics(scope: Scope, enabled: bool) -> Arc<Self> {
+    pub(super) fn with_diagnostics(scope: Scope, enabled: bool) -> Arc<Self> {
         let diagnostics = enabled.then(|| Box::new(Diagnostics::new(&scope)));
         Arc::new(Self {
             scope,
@@ -324,16 +326,29 @@ impl ActivityInbox {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_scan(&self, items: u64, pages: u64) {
-        let session = self.0.open(Source::Remote);
-        session.publisher().scan(ScanUpdate::Progress(ScanProgress {
-            path: Some("Documents/Teaching".into()),
-            items,
-            pages,
-        }));
-        session
-            .publisher()
-            .scan(ScanUpdate::State(ScanState::RetryScheduled, None));
+    pub(crate) fn test_source(&self, source: Source) -> ActivitySession {
+        self.0.open(source)
+    }
+
+    /// Returns the active activity snapshot for this account and synchronization root.
+    pub(crate) fn current(&self) -> Vec<Activity> {
+        self.0
+            .latest
+            .lock()
+            .unwrap()
+            .active
+            .values()
+            .map(|active| active.activity.clone())
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_diagnostics(&self) -> String {
+        let mut output = Vec::new();
+        if let Some(batch) = self.0.take_diagnostics() {
+            batch.write(&mut output).unwrap();
+        }
+        String::from_utf8(output).unwrap()
     }
 }
 
@@ -438,6 +453,19 @@ impl ActivitySession {
         if changed {
             self.0.channel.changed.notify_one();
         }
+    }
+}
+
+#[cfg(test)]
+impl ActivitySession {
+    pub(crate) fn test_progress(&self, path: Option<Path>, items: u64, pages: u64) {
+        self.0
+            .scan(ScanUpdate::Progress(ScanProgress { path, items, pages }));
+    }
+
+    pub(crate) fn test_retry(&self) {
+        self.0
+            .scan(ScanUpdate::State(ScanState::RetryScheduled, None));
     }
 }
 
