@@ -205,6 +205,10 @@ samples are accepted by sequence. The public watch holds the latest compatible v
 may coalesce intermediate updates. Producers never acquire the public watch lock or await a
 telemetry consumer. The bounded functional queue still provides backpressure on file admission.
 
+The Engine shares the monotonic sampler, scope and ID types, bounded retention,
+and off-thread diagnostic writer with [Operations](OPERATIONS.md#operations-observability).
+Detectors owns its source lifecycles, phases and status projection.
+
 ### Instrumentation
 
 Paths in the table are relative to `engine/src/detectors`.

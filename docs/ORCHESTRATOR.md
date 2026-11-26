@@ -86,6 +86,12 @@ presentation. This remains a coalescing feed, not a complete operation history. 
 Folder changes stop and replace the prior
 scope before activating the newly saved one.
 
+The status supervisor also consumes the account/root-scoped Operations inbox. It can
+inspect active execution and recovery activities while both Detectors sources report
+progress. This mailbox has its own notification. The functional queue carries evidence and
+lifecycle commands. The public projection derives `SynchronizationStatus.work` and `pending`
+from its existing inputs. See [Operations observability](OPERATIONS.md#operations-observability).
+
 ## Current acceptance boundary
 
 Step 9 now starts functional observation sources and joins current sides only through a known

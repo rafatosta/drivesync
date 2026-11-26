@@ -760,3 +760,151 @@ impl GoogleOperator {
             .await
     }
 }
+
+#[tokio::test]
+#[ignore = "controlled Operations cost fixture"]
+async fn operations_observability_cost() {
+    let case = std::env::var("DRIVESYNC_OPERATIONS_FIXTURE").unwrap();
+    let enabled = std::env::var_os("DRIVESYNC_OPERATIONS_FIXTURE_TELEMETRY")
+        .is_some_and(|value| value == "1");
+    let sandbox = Sandbox::new();
+    let executor = setup(&sandbox);
+    let inbox = if enabled {
+        activity::ActivityInbox::for_config(&executor.config)
+    } else {
+        activity::ActivityInbox::disabled()
+    };
+    let path = executor.config.local_root.join("file");
+    let session = GoogleSession::new("test", "synthetic");
+    let usage = || {
+        let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+        assert_eq!(unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) }, 0);
+        let micros = |time: libc::timeval| time.tv_sec * 1_000_000 + time.tv_usec;
+        (
+            micros(usage.ru_utime) + micros(usage.ru_stime),
+            usage.ru_maxrss,
+        )
+    };
+    let measure = || (std::time::Instant::now(), usage().0);
+    let start = match case.as_str() {
+        "hash" | "small" => {
+            let size = if case == "hash" { 32 * 1024 * 1024 } else { 32 };
+            std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+            let request = request(&executor, OperationAction::UpdateRemoteContent);
+            let start = measure();
+            if case == "hash" {
+                inbox
+                    .test_execute(&executor.config, &request, async {
+                        executor.filesystem.observe(std::path::Path::new("file"))
+                    })
+                    .await
+                    .unwrap();
+            } else {
+                for _ in 0..2_000 {
+                    inbox
+                        .test_execute(&executor.config, &request, async {
+                            executor.filesystem.check(&request.local)
+                        })
+                        .await
+                        .unwrap();
+                }
+            }
+            start
+        }
+        "download" => {
+            let total = 16 * 1024 * 1024;
+            let body = "x".repeat(total);
+            let digest = format!("{:x}", Sha256::digest(body.as_bytes()));
+            let server = endpoint(move |_| (200, body.clone(), vec![])).await;
+            let google = operator(&sandbox, server.client.clone());
+            let request = request(&executor, OperationAction::Download);
+            let mut temp = executor.filesystem.temporary().unwrap();
+            let start = measure();
+            inbox
+                .test_execute(&executor.config, &request, async {
+                    let mut media = activity::request(
+                        Phase::DownloadHeaders,
+                        google
+                            .client
+                            .get_file_bytes(&session, &FileId("media".into()), None),
+                    )
+                    .await
+                    .map_err(read_error)?;
+                    receive_verified(&mut media.body, &mut temp, total as u64, &digest).await
+                })
+                .await
+                .unwrap();
+            start
+        }
+        "upload" => {
+            let total = 4 * 1024 * 1024;
+            let body = "x".repeat(total);
+            std::fs::write(path, &body).unwrap();
+            let after = metadata("file", "remote-root", 2, &body);
+            let server = endpoint(move |request| {
+                let (_, range) = request
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(": ")?;
+                        name.eq_ignore_ascii_case("content-range")
+                            .then_some((name, value))
+                    })
+                    .unwrap();
+                let (_, end) = range.split_once('-').unwrap();
+                let offset = end.split_once('/').unwrap().0.parse::<usize>().unwrap() + 1;
+                if offset == total {
+                    (200, after.clone(), vec![])
+                } else {
+                    (
+                        308,
+                        String::new(),
+                        vec![("Range".into(), format!("bytes=0-{}", offset - 1))],
+                    )
+                }
+            })
+            .await;
+            let google = operator(&sandbox, server.client.clone());
+            let request = request(&executor, OperationAction::UpdateRemoteContent);
+            let journal = MemoryJournal(Mutex::new(
+                super::super::recovery::record(
+                    &executor.config,
+                    &request,
+                    &executor.filesystem,
+                    None,
+                )
+                .unwrap(),
+            ));
+            let upload = GoogleUploadSession {
+                session_uri: format!(
+                    "{}/upload/drive/v2/files/remote?upload_id=bench",
+                    server.base
+                ),
+                total_bytes: Some(total as u64),
+            };
+            let start = measure();
+            inbox
+                .test_execute(
+                    &executor.config,
+                    &request,
+                    google.transfer(
+                        &session,
+                        &request,
+                        &executor.filesystem,
+                        UploadCursor {
+                            session: upload,
+                            offset: 0,
+                        },
+                        Some("\"v1\""),
+                        Some(&journal),
+                    ),
+                )
+                .await
+                .unwrap();
+            start
+        }
+        _ => panic!("unknown Operations fixture"),
+    };
+    let wall = start.0.elapsed().as_micros();
+    let (cpu, rss) = usage();
+    println!("operations-fixture {case} {enabled} wall_us={wall} cpu_us={} rss_kib={rss} publications={}", cpu - start.1, inbox.publication_count());
+}

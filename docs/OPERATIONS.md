@@ -142,3 +142,120 @@ private/public property handling. Unknown incomplete replacements remain blocked
 | Upload | Session preparation, reads, HTTP submission, acknowledgement and resume | Local reads and contiguous offsets from chunk boundaries and provider receipts |
 | Recovery | Inventory enumeration, per-record validation and reconciliation, resume and confirmation | Original execution IDs, checked records, persisted receipts and recovery issues |
 | Conflicts and trash | Archive copy and verification, retained-content checks and receipts | Bytes already processed by archive loops, existing checkpoint and mutation outcomes |
+
+### Contracts and lifecycle
+
+Operations binds an `ActivityInbox` to each Orchestrator account and synchronization root.
+The mailbox exposes the current set and ordered updates. The supervisor consumes updates
+independently of the functional queue and reads active snapshots for internal diagnostics.
+Each activity has a monotonic ID, optional parent, scoped execution and item IDs when
+available, an opaque display label, action, direction, phase, state, optional progress,
+sequence, and monotonic start and update times. A recovery pass owns one child per checked
+execution, using the ID from its persisted record. IDs from different inboxes are scoped
+to their respective account and root.
+
+The executor installs its reporting scope while polling the functional future. Filesystem,
+RemoteExecutor, Journal, Recovery, conflicts and trash start children or report evidence
+through the private `Span` contract. The Google specialization translates session,
+metadata and transport evidence to the same phases and units. Reporting scopes also
+cover synchronous calls in the future and have no background producer tasks.
+The existing recovery observer supplies the current item for the public recovery
+projection. Its callback carries the presentation fields needed by that projection.
+
+Execution advances through receipt, resource acquisition, validation, preparation,
+durable intent, dispatch, verification, effect persistence and confirmation as applicable.
+States are running, waiting with a typed reason, and terminal with a typed outcome.
+Terminal outcomes include completion, failure, skip, cancellation, unconfirmed effect
+and inconclusive recovery. Effect evidence distinguishes no applied effect, applied,
+verified and uncertain. The receipt records the outcome of the existing Inventory write.
+An effect can be verified and recorded while its subsequent confirmation write fails.
+An uncertainty receipt can persist evidence of the uncertainty. A completed child,
+including a transfer, leaves the parent execution active. Terminal operation success
+comes from the functional result after any required write.
+
+### Progress and limits
+
+- The existing download stream supplies received bytes. Completed staging writes supply
+  written bytes. Integrity verification reports bytes processed by SHA-256 or by the
+  MD5/SHA-256 evidence fallback. Digest comparison determines verification success.
+  A write or integrity failure has a distinct outcome. An absent HTTP content length
+  still permits a known total from validated remote metadata. The contract supports
+  an unknown total. Google requires existing size evidence for verified binary publication.
+- Upload reads, submissions and confirmed positions are distinct. Submissions measure
+  bytes passed to the HTTP client. Socket-level delivery is outside that measurement.
+  Confirmed progress is the contiguous prefix accepted by the provider. A resumed
+  transfer starts at the freshly confirmed prefix. Attempt bytes and attempt speed
+  exclude the earlier prefix. Failed requests may have submitted bytes without advancing
+  the confirmed position.
+- Transfer rates use real received or attempt-submitted bytes over monotonic elapsed time.
+  Ancestor and recovery counters use records already visited. Recovery totals derive from
+  the enumerated pending records that match the existing recoverable-state filter.
+  Directory listing reports client calls, pages returned and the items in the response.
+  Destination checks retain their existing single-page completeness requirement.
+- Hashes use the Scanner threshold of 1 MiB for incremental publication. The final count
+  is available below the threshold. Conflict archive copies use their existing buffers.
+  Staged publication keeps the optimized `std::io::copy` and reports its returned count.
+  The local counters reflect completed writes because the existing `write_all` interface
+  can return a failure after an unreported partial write.
+
+The channel retains up to 128 active activities and 256 recent updates per scope.
+A slow or absent reader can miss overwritten records. Capacity failures omit additional
+activity and leave the operation running. The 200 ms sampler, scope and identity types,
+bounded retention and off-thread diagnostic writer are shared with Detectors. Operations
+retains terminal records in the recent update buffer. Detectors uses source generations
+and source summary slots. Starts, phase and wait transitions, final progress, and terminal
+records publish immediately. Publication occurs independently of the public watch.
+The channel discards late updates using activity IDs and sequence numbers, and closes
+descendants when their parent or the inbox ends. An abandoned reporting scope retires
+its activity. Functional cancellation follows the existing executor and shutdown rules.
+
+Set `DRIVESYNC_TRACE_OPERATIONS=1` for stderr diagnostics. Output uses temporary scope
+and item labels, normalized phases, waits, durations, measured progress, and typed outcomes.
+The writer formats a bounded batch outside producer locks. Short transport wait transitions
+and successful short upload checkpoints are omitted from trace output to avoid per-chunk
+logs. The internal mailbox still publishes those waits and receipts. Diagnostic retention
+is best effort while stderr is blocked.
+
+### Validation and measured cost
+
+The GNOME SDK 50 workspace passed formatting, Clippy with warnings denied, workspace tests,
+private rustdoc generation and doctests. The workspace ran 754 passing tests and ignored 39
+by default. The Operations tests cover scope, hierarchy, ordering, cancellation, bounded
+retention, a blocked diagnostic writer, detector coexistence, integrity and staging failures,
+upload acknowledgement and recovery, conflicts, trash, and unsuccessful Inventory writes.
+The live Google Drive and installed Flatpak scenarios require separate acceptance.
+
+The ignored `operations_observability_cost` test runs equivalent fixtures with reporting
+enabled and disabled. Select a fixture with `DRIVESYNC_OPERATIONS_FIXTURE` set to `hash`,
+`download`, `upload`, or `small`. Set `DRIVESYNC_OPERATIONS_FIXTURE_TELEMETRY=1` to enable
+the inbox. The fixtures use one debug test process per run in GNOME SDK 50, alternate the
+mode across five pairs, and leave tracing off. They hash a 32 MiB sparse local file, download
+and verify 16 MiB over loopback, upload 4 MiB in the existing 256 KiB chunks with a controlled
+in-memory journal, or check the identity and content of a 32-byte file 2,000 times.
+
+Wall and CPU values are medians of the five runs. CPU uses process `getrusage` deltas
+around the workload. Peak RSS covers the whole test process. Allocation requests are the
+medians of three separate runs counting glibc `malloc`, `calloc`, and `realloc`. The
+publication total includes wait transitions. The fixture leaves the inbox unread during
+the workload and counts retained plus overwritten records afterward.
+
+| Workload | Reporting | Wall (ms) | CPU (ms) | Peak RSS (KiB) | Allocation requests | Publications |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| SHA-256, 32 MiB | Disabled | 435.27 | 434.12 | 17,720 | 929 | 0 |
+| SHA-256, 32 MiB | Enabled | 434.81 | 434.29 | 18,296 | 939 | 9 |
+| Loopback download, 16 MiB | Disabled | 243.59 | 241.81 | 72,748 | 1,153 | 0 |
+| Loopback download, 16 MiB | Enabled | 244.33 | 242.33 | 72,916 | 1,163 | 174 |
+| Loopback upload, 4 MiB | Disabled | 69.68 | 68.86 | 34,208 | 5,238 | 0 |
+| Loopback upload, 4 MiB | Enabled | 69.64 | 68.84 | 34,608 | 5,248 | 48 |
+| 2,000 local checks, 32 bytes each | Disabled | 24.31 | 24.25 | 17,980 | 28,915 | 0 |
+| 2,000 local checks, 32 bytes each | Enabled | 30.80 | 30.67 | 18,428 | 34,922 | 16,000 |
+
+The median wall time for the hash and transfer fixtures differed by at most 0.74 ms.
+The observed wall-time ranges overlapped between modes for all three workloads.
+The short checks added 6.49 ms over 2,000 checks, or about
+3.25 µs per check (26.7% at the median). This fixture concentrates activity lifecycle costs.
+Reusing the active registry and including the final hash count in its terminal record
+reduced the preliminary short-check publication count from 18,000 to 16,000.
+Loopback includes test-server overhead. The debug workloads measure local instrumentation
+cost and process variability. Production throughput and live provider latency require
+separate measurement.

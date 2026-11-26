@@ -209,6 +209,14 @@ impl ActivityInbox {
     }
 
     #[cfg(test)]
+    pub(super) fn publication_count(&self) -> u64 {
+        self.0.as_ref().map_or(0, |channel| {
+            let mut latest = channel.latest.lock().unwrap();
+            latest.overwritten + latest.updates.take().len() as u64
+        })
+    }
+
+    #[cfg(test)]
     pub(in crate::orchestrator) fn for_config(config: &super::models::OperatorConfig) -> Self {
         Self::with_trace(
             Scope {
