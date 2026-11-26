@@ -239,15 +239,19 @@ fn start_guarded(
                 biased;
                 result = &mut task => break result,
                 _ = activity_inbox.changed() => {
-                    status.send_if_modified(|status| {
-                        !matches!(status.state, SynchronizationState::Stopped | SynchronizationState::Failed)
-                            && status.account_id == activity_inbox.scope().account
-                            && activity_inbox.project(&mut status.work)
-                    });
+                    if activity_inbox.has_scan_changes() {
+                        status.send_if_modified(|status| {
+                            !matches!(status.state, SynchronizationState::Stopped | SynchronizationState::Failed)
+                                && status.account_id == activity_inbox.scope().account
+                                && activity_inbox.project(&mut status.work)
+                        });
+                    }
+                    activity_inbox.flush_diagnostics();
                 }
             }
         };
         activity_inbox.close();
+        activity_inbox.flush_diagnostics();
         if outcome.is_err() {
             let mut failure = status.borrow().clone();
             failure.state = SynchronizationState::Failed;

@@ -10,12 +10,14 @@ pub(super) struct Sample<T> {
     pub(super) sequence: u64,
     pub(super) at: Instant,
     pub(super) value: T,
+    pub(super) coalesced: u64,
 }
 
 #[derive(Default)]
 struct Sampling {
     last: Option<Instant>,
     sequence: u64,
+    coalesced: u64,
 }
 
 #[derive(Default)]
@@ -27,21 +29,31 @@ impl ActivityReporter {
         immediate: bool,
         value: impl FnOnce() -> T,
     ) -> Option<Sample<T>> {
-        let (sequence, at) = {
+        let (sequence, at, coalesced) = {
             let mut sampling = self.0.lock().unwrap();
             let at = Instant::now();
             if !immediate && sampling.last.is_some_and(|last| at - last < INTERVAL) {
+                sampling.coalesced += 1;
                 return None;
             }
             sampling.last = Some(at);
             sampling.sequence += 1;
-            (sampling.sequence, at)
+            (
+                sampling.sequence,
+                at,
+                std::mem::take(&mut sampling.coalesced),
+            )
         };
         Some(Sample {
             sequence,
             at,
             value: value(),
+            coalesced,
         })
+    }
+
+    pub(super) fn take_coalesced(&self) -> u64 {
+        std::mem::take(&mut self.0.lock().unwrap().coalesced)
     }
 }
 

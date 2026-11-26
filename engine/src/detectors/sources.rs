@@ -138,7 +138,7 @@ fn supervise(
     tokio::spawn(async move {
         let unexpected = task.await.is_err() && !worker.cancel.is_cancelled();
         if unexpected {
-            worker.scan_state(source, ScanState::Failed, None);
+            session.fail();
         }
         drop(session);
         if unexpected {

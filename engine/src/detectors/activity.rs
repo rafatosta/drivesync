@@ -1,165 +1,21 @@
 //! Internal account/root-scoped activity contract exposed by the Detectors facade.
 
-use crate::models::{AccountId, Path, SyncRootId};
+mod diagnostics;
+mod models;
+
+use crate::models::Path;
+use diagnostics::{Diagnostics, Event};
+pub(crate) use models::*;
 use std::time::Instant;
-
-/// Identity of an activity within one Orchestrator lifetime.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct ActivityId(pub(crate) u64);
-
-/// Scope fixed by the synchronization instance, independent of functional capture epochs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Scope {
-    pub(crate) account: AccountId,
-    pub(crate) root: SyncRootId,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Origin {
-    Local,
-    Remote,
-    Shared,
-}
-
-/// Normalized work that can be understood without access to a provider response or observation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Phase {
-    Initialize,
-    Prepare,
-    Observe,
-    Traverse,
-    Recover,
-    Checksum,
-    CompareSnapshots,
-    BuildObservations,
-    Collect,
-    ValidateAccess,
-    Checkpoint,
-    ReadDirectory,
-    ReadChanges,
-    ValidateItems,
-    VerifyKnown,
-    ReadMetadata,
-    VerifyContent,
-    ResolveAncestry,
-    Contextualize,
-    ReadInventory,
-    ResolveIdentities,
-    ReuseContext,
-    Audit,
-    Deliver,
-    Idle,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Wait {
-    Worker,
-    Ownership,
-    Authorization,
-    ObserverState,
-    Provider,
-    Continuation,
-    Context,
-    Inventory,
-    Queue,
-    Refresh,
-    Retry,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum State {
-    Running,
-    Waiting(Wait),
-    Complete,
-    Failed,
-    Cancelled,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Unit {
-    Files,
-    Observations,
-    EntriesVisited,
-    EntriesCompleted,
-    Directories,
-    SnapshotItems,
-    ChecksumsReused,
-    ItemsCompared,
-    PagesReceived,
-    PagesRequested,
-    ItemsCollected,
-    DirectoriesPending,
-    Changes,
-    ItemsChecked,
-    Ancestors,
-    Records,
-    Queries,
-    Bytes,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Progress {
-    pub(crate) unit: Unit,
-    pub(crate) completed: u64,
-    pub(crate) total: Option<u64>,
-}
-
-impl Progress {
-    pub(crate) fn new(unit: Unit, completed: usize, total: Option<usize>) -> Self {
-        Self {
-            unit,
-            completed: completed as u64,
-            total: total.map(|value| value as u64),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Reason {
-    CoverageLost,
-    NamespaceChanged,
-    NoCurrentWatch,
-    BudgetReached,
-    IncompleteObservation,
-    InvalidContinuation,
-    CaptureRequired,
-}
-
-/// Latest known details. Paths are root-relative display positions, with no provider identifiers.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Details {
-    pub(crate) reason: Option<Reason>,
-    pub(crate) item: Option<Path>,
-    pub(crate) progress: [Option<Progress>; 5],
-}
-
-impl Details {
-    pub(crate) fn count(progress: Progress) -> Self {
-        Self {
-            progress: [Some(progress), None, None, None, None],
-            ..Self::default()
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Activity {
-    pub(crate) id: ActivityId,
-    pub(crate) parent: Option<ActivityId>,
-    pub(crate) origin: Origin,
-    pub(crate) phase: Phase,
-    pub(crate) state: State,
-    pub(crate) details: Details,
-    pub(crate) sequence: u64,
-    pub(crate) started: Instant,
-    pub(crate) updated: Instant,
-}
 
 use super::progress::{ActivityReporter, Sample};
 use crate::synchronization::{SynchronizationScan, SynchronizationScanState, SynchronizationWork};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 use tokio::sync::Notify;
 
@@ -226,12 +82,42 @@ struct Latest {
     last_id: u64,
     sources: [Slot; 2],
     active: BTreeMap<ActivityId, Active>,
+    diagnostics: Option<Box<Diagnostics>>,
 }
 
 impl Latest {
     fn next_id(&mut self) -> ActivityId {
         self.last_id += 1;
         ActivityId(self.last_id)
+    }
+
+    fn retire(&mut self, state: State, belongs_to: impl Fn(&Active) -> bool) {
+        let diagnostics = &mut self.diagnostics;
+        self.active.retain(|_, active| {
+            if !belongs_to(active) {
+                return true;
+            }
+            finish_record(diagnostics, &mut active.activity, state, 0);
+            false
+        });
+    }
+}
+
+fn finish_record(
+    diagnostics: &mut Option<Box<Diagnostics>>,
+    activity: &mut Activity,
+    state: State,
+    coalesced: u64,
+) -> bool {
+    if let Some(diagnostics) = diagnostics {
+        activity.state = state;
+        activity.updated = Instant::now();
+        activity.sequence += 1;
+        diagnostics.counts.coalesced += coalesced;
+        diagnostics.push(Event::Finished, activity);
+        true
+    } else {
+        false
     }
 }
 
@@ -245,9 +131,20 @@ pub(super) struct ActivityChannel {
 
 impl ActivityChannel {
     pub(super) fn new(scope: Scope) -> Arc<Self> {
+        Self::with_diagnostics(
+            scope,
+            std::env::var_os("DRIVESYNC_TRACE_DETECTORS").is_some_and(|value| value == "1"),
+        )
+    }
+
+    fn with_diagnostics(scope: Scope, enabled: bool) -> Arc<Self> {
+        let diagnostics = enabled.then(|| Box::new(Diagnostics::new(&scope)));
         Arc::new(Self {
             scope,
-            latest: Mutex::default(),
+            latest: Mutex::new(Latest {
+                diagnostics,
+                ..Latest::default()
+            }),
             changed: Notify::new(),
         })
     }
@@ -258,15 +155,20 @@ impl ActivityChannel {
             let generation = latest.next_id();
             let mut cleared = false;
             if !latest.closed {
-                latest
-                    .active
-                    .retain(|_, active| active.source != Some(source));
+                latest.retire(State::Cancelled, |active| active.source == Some(source));
                 let slot = &mut latest.sources[source.index()];
                 slot.generation = Some(generation);
                 cleared = slot.scan.take().is_some();
                 slot.dirty |= cleared;
             }
-            (generation, cleared)
+            (
+                generation,
+                cleared
+                    || latest
+                        .diagnostics
+                        .as_ref()
+                        .is_some_and(|diagnostics| diagnostics.pending()),
+            )
         };
         if cleared {
             self.changed.notify_one();
@@ -291,10 +193,67 @@ impl ActivityChannel {
     }
 
     fn close(&self) {
-        let mut latest = self.latest.lock().unwrap();
-        latest.closed = true;
-        latest.active.clear();
-        latest.sources = Default::default();
+        let pending = {
+            let mut latest = self.latest.lock().unwrap();
+            latest.closed = true;
+            latest.retire(State::Cancelled, |_| true);
+            latest.sources = Default::default();
+            latest
+                .diagnostics
+                .as_ref()
+                .is_some_and(|diagnostics| diagnostics.pending())
+        };
+        if pending {
+            self.changed.notify_one();
+        }
+    }
+
+    fn has_scan_changes(&self) -> bool {
+        self.latest
+            .lock()
+            .unwrap()
+            .sources
+            .iter()
+            .any(|slot| slot.dirty)
+    }
+
+    fn flush_diagnostics(self: &Arc<Self>) {
+        // A blocked stderr cannot delay publication or shutdown. One off-thread writer keeps
+        // outstanding diagnostic output bounded even when many sessions start and stop.
+        static WRITING: AtomicBool = AtomicBool::new(false);
+        if !self
+            .latest
+            .lock()
+            .unwrap()
+            .diagnostics
+            .as_ref()
+            .is_some_and(|diagnostics| diagnostics.pending())
+            || WRITING
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+        {
+            return;
+        }
+        struct WriteLease;
+        impl Drop for WriteLease {
+            fn drop(&mut self) {
+                WRITING.store(false, Ordering::Release);
+            }
+        }
+        let lease = WriteLease;
+        let channel = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let batch = channel.take_diagnostics();
+            if let Some(batch) = batch {
+                let _ = batch.write(std::io::stderr().lock());
+            }
+            drop(lease);
+            channel.changed.notify_one();
+        });
+    }
+
+    fn take_diagnostics(&self) -> Option<diagnostics::Batch> {
+        self.latest.lock().unwrap().diagnostics.as_mut()?.take()
     }
 
     async fn changed(&self) {
@@ -345,6 +304,14 @@ impl ActivityInbox {
 
     pub(crate) async fn changed(&self) {
         self.0.changed().await;
+    }
+
+    pub(crate) fn has_scan_changes(&self) -> bool {
+        self.0.has_scan_changes()
+    }
+
+    pub(crate) fn flush_diagnostics(&self) {
+        self.0.flush_diagnostics();
     }
 
     pub(crate) fn project(&self, work: &mut SynchronizationWork) -> bool {
@@ -446,17 +413,37 @@ impl ActivitySession {
     }
 }
 
+impl ActivitySession {
+    pub(super) fn fail(&self) {
+        self.retire(State::Failed);
+    }
+
+    fn retire(&self, state: State) {
+        let changed = {
+            let mut latest = self.0.channel.latest.lock().unwrap();
+            let source = self.0.source.expect("a source session owns a slot");
+            let slot = &mut latest.sources[source.index()];
+            if slot.generation != Some(self.0.generation) {
+                return;
+            }
+            let scan = state == State::Failed
+                && apply_scan(source, slot, ScanUpdate::State(ScanState::Failed, None));
+            slot.generation = None;
+            latest.retire(state, |active| active.generation == self.0.generation);
+            scan || latest
+                .diagnostics
+                .as_ref()
+                .is_some_and(|diagnostics| diagnostics.pending())
+        };
+        if changed {
+            self.0.channel.changed.notify_one();
+        }
+    }
+}
+
 impl Drop for ActivitySession {
     fn drop(&mut self) {
-        let mut latest = self.0.channel.latest.lock().unwrap();
-        let source = self.0.source.expect("a source session owns a slot");
-        let slot = &mut latest.sources[source.index()];
-        if slot.generation == Some(self.0.generation) {
-            slot.generation = None;
-            latest
-                .active
-                .retain(|_, active| active.generation != self.0.generation);
-        }
+        self.retire(State::Cancelled);
     }
 }
 
@@ -482,13 +469,12 @@ impl ActivityPublisher {
         state: State,
         details: Details,
     ) -> ActivityGuard {
-        let id = {
+        let (id, changed) = {
             let mut latest = self.channel.latest.lock().unwrap();
             if latest.closed
                 || self.source.is_some_and(|source| {
                     latest.sources[source.index()].generation != Some(self.generation)
                 })
-                || latest.active.len() >= MAX_ACTIVE
                 || parent.is_some_and(|parent| {
                     !latest
                         .active
@@ -496,35 +482,48 @@ impl ActivityPublisher {
                         .is_some_and(|active| active.generation == self.generation)
                 })
             {
-                return ActivityGuard {
-                    publisher: self.clone(),
-                    origin,
-                    id: None,
-                    reporter: ActivityReporter::default(),
-                };
+                return self.disabled(origin);
+            }
+            if latest.active.len() >= MAX_ACTIVE {
+                if let Some(diagnostics) = &mut latest.diagnostics {
+                    diagnostics.counts.capacity += 1;
+                    drop(latest);
+                    self.channel.changed.notify_one();
+                }
+                return self.disabled(origin);
             }
             let id = latest.next_id();
             let now = Instant::now();
+            let activity = Activity {
+                id,
+                parent,
+                origin,
+                phase,
+                state,
+                details,
+                sequence: 0,
+                started: now,
+                updated: now,
+            };
+            let changed = if let Some(diagnostics) = &mut latest.diagnostics {
+                diagnostics.push(Event::Started, &activity);
+                true
+            } else {
+                false
+            };
             latest.active.insert(
                 id,
                 Active {
                     source: self.source,
                     generation: self.generation,
-                    activity: Activity {
-                        id,
-                        parent,
-                        origin,
-                        phase,
-                        state,
-                        details,
-                        sequence: 0,
-                        started: now,
-                        updated: now,
-                    },
+                    activity,
                 },
             );
-            id
+            (id, changed)
         };
+        if changed {
+            self.channel.changed.notify_one();
+        }
         ActivityGuard {
             publisher: self.clone(),
             origin,
@@ -533,39 +532,86 @@ impl ActivityPublisher {
         }
     }
 
+    fn disabled(&self, origin: Origin) -> ActivityGuard {
+        ActivityGuard {
+            publisher: self.clone(),
+            origin,
+            id: None,
+            reporter: ActivityReporter::default(),
+        }
+    }
+
     fn update(&self, id: ActivityId, sample: Sample<Reported>) {
-        let scan_changed = {
+        let changed = {
             let mut latest = self.channel.latest.lock().unwrap();
-            let Some(active) = latest.active.get_mut(&id) else {
-                return;
-            };
-            let activity = &mut active.activity;
-            if sample.sequence <= activity.sequence {
-                return;
+            let Latest {
+                active,
+                diagnostics,
+                ..
+            } = &mut *latest;
+            if let Some(diagnostics) = diagnostics {
+                diagnostics.counts.coalesced += sample.coalesced;
             }
-            activity.sequence = sample.sequence;
-            activity.updated = sample.at;
-            activity.state = sample.value.state;
-            if let Some(details) = sample.value.details {
-                activity.details = details;
+            if let Some(activity) = active
+                .get_mut(&id)
+                .map(|active| &mut active.activity)
+                .filter(|activity| sample.sequence > activity.sequence)
+            {
+                let event = if activity.state == sample.value.state {
+                    Event::Progress
+                } else {
+                    Event::Transition
+                };
+                activity.sequence = sample.sequence;
+                activity.updated = sample.at;
+                activity.state = sample.value.state;
+                if let Some(details) = sample.value.details {
+                    activity.details = details;
+                }
+                let diagnostic_changed = if let Some(diagnostics) = diagnostics {
+                    diagnostics.push(event, activity);
+                    true
+                } else {
+                    false
+                };
+                let scan_changed =
+                    self.source
+                        .zip(sample.value.scan)
+                        .is_some_and(|(source, scan)| {
+                            apply_scan(
+                                source,
+                                &mut latest.sources[source.index()],
+                                ScanUpdate::Progress(scan),
+                            )
+                        });
+                diagnostic_changed || scan_changed
+            } else if let Some(diagnostics) = diagnostics {
+                diagnostics.counts.stale += 1;
+                true
+            } else {
+                false
             }
-            self.source
-                .zip(sample.value.scan)
-                .is_some_and(|(source, scan)| {
-                    apply_scan(
-                        source,
-                        &mut latest.sources[source.index()],
-                        ScanUpdate::Progress(scan),
-                    )
-                })
         };
-        if scan_changed {
+        if changed {
             self.channel.changed.notify_one();
         }
     }
 
-    fn finish(&self, id: ActivityId, _state: State) {
-        self.channel.latest.lock().unwrap().active.remove(&id);
+    fn finish(&self, id: ActivityId, state: State, coalesced: u64) {
+        let changed = {
+            let mut latest = self.channel.latest.lock().unwrap();
+            latest.active.remove(&id).is_some_and(|mut active| {
+                finish_record(
+                    &mut latest.diagnostics,
+                    &mut active.activity,
+                    state,
+                    coalesced,
+                )
+            })
+        };
+        if changed {
+            self.channel.changed.notify_one();
+        }
     }
 }
 
@@ -596,12 +642,7 @@ impl ActivityGuard {
         details: Details,
     ) -> Self {
         if self.id.is_none() {
-            return Self {
-                publisher: self.publisher.clone(),
-                origin,
-                id: None,
-                reporter: ActivityReporter::default(),
-            };
+            return self.publisher.disabled(origin);
         }
         self.publisher.begin(origin, self.id, phase, state, details)
     }
@@ -655,7 +696,8 @@ impl ActivityGuard {
 
     pub(crate) fn finish(mut self, state: State) {
         if let Some(id) = self.id.take() {
-            self.publisher.finish(id, state);
+            self.publisher
+                .finish(id, state, self.reporter.take_coalesced());
         }
     }
 }
@@ -670,6 +712,7 @@ impl Drop for ActivityGuard {
                 } else {
                     State::Cancelled
                 },
+                self.reporter.take_coalesced(),
             );
         }
     }
