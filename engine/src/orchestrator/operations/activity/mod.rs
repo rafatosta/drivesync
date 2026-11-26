@@ -253,25 +253,53 @@ impl ActivityInbox {
                 .clear();
             return;
         }
-        if channel
+        channel.flush();
+    }
+}
+
+impl Channel {
+    fn flush(self: &Arc<Self>) {
+        static WRITER: DiagnosticWriter = DiagnosticWriter::new();
+        if !self.pending_trace() {
+            return;
+        }
+        let channel = self.clone();
+        let wake = self.clone();
+        WRITER.spawn(
+            move || {
+                let _ = channel.write_pending(std::io::stderr().lock());
+            },
+            move || {
+                let closed = wake.latest.lock().unwrap_or_else(|e| e.into_inner()).closed;
+                if closed {
+                    // The supervisor no longer receives notifications after closing the inbox.
+                    wake.flush();
+                } else {
+                    wake.changed.notify_one();
+                }
+            },
+        );
+    }
+
+    fn pending_trace(&self) -> bool {
+        !self
             .latest
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .updates
             .is_empty()
-        {
-            return;
-        }
-        static WRITER: DiagnosticWriter = DiagnosticWriter::new();
-        let channel = channel.clone();
-        let wake = channel.clone();
-        WRITER.spawn(move || channel.write(), move || wake.changed.notify_one());
     }
-}
 
-impl Channel {
-    fn write(&self) {
-        let _ = self.write_to(std::io::stderr().lock());
+    fn write_pending(&self, mut output: impl Write) -> std::io::Result<()> {
+        self.write_to(&mut output)?;
+        let closing_backlog = {
+            let latest = self.latest.lock().unwrap_or_else(|e| e.into_inner());
+            latest.closed && !latest.updates.is_empty()
+        };
+        if closing_backlog {
+            self.write_to(&mut output)?;
+        }
+        Ok(())
     }
 
     fn write_to(&self, mut output: impl Write) -> std::io::Result<()> {

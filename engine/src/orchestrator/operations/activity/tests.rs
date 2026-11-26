@@ -280,12 +280,13 @@ async fn concurrent_updates_remain_monotonic_without_blocking_on_a_consumer() {
 }
 
 #[tokio::test]
-async fn blocked_diagnostic_output_does_not_hold_the_mailbox_lock() {
+async fn blocked_diagnostic_output_drains_terminal_updates_without_holding_the_mailbox_lock() {
     use std::sync::mpsc;
 
     struct BlockedOutput {
         ready: mpsc::SyncSender<()>,
         release: Option<mpsc::Receiver<()>>,
+        bytes: Vec<u8>,
     }
 
     impl Write for BlockedOutput {
@@ -294,6 +295,7 @@ async fn blocked_diagnostic_output_does_not_hold_the_mailbox_lock() {
                 self.ready.send(()).unwrap();
                 release.recv().unwrap();
             }
+            self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
         }
 
@@ -306,36 +308,37 @@ async fn blocked_diagnostic_output_does_not_hold_the_mailbox_lock() {
     let inbox = ActivityInbox::for_config(&config);
     inbox
         .observe(async {
-            let mut execution = execute(&config, "run");
+            let execution = execute(&config, "run");
             let channel = inbox.0.as_ref().unwrap().clone();
             let (ready, entered) = mpsc::sync_channel(0);
             let (release, blocked) = mpsc::sync_channel(0);
             let (published, observed) = mpsc::sync_channel(0);
-            std::thread::scope(|scope| {
-                scope.spawn(move || {
-                    channel
-                        .write_to(BlockedOutput {
-                            ready,
-                            release: Some(blocked),
-                        })
-                        .unwrap();
+            let trace = std::thread::scope(|scope| {
+                let writer = scope.spawn(move || {
+                    let mut output = BlockedOutput {
+                        ready,
+                        release: Some(blocked),
+                        bytes: Vec::new(),
+                    };
+                    channel.write_pending(&mut output).unwrap();
+                    String::from_utf8(output.bytes).unwrap()
                 });
                 entered.recv_timeout(Duration::from_secs(5)).unwrap();
                 let span = &execution;
+                let inbox = &inbox;
                 scope.spawn(move || {
                     span.phase(Phase::Validate, State::Running);
+                    inbox.close();
                     let _ = published.send(());
                 });
                 let advanced = observed.recv_timeout(Duration::from_secs(5));
                 release.send(()).unwrap();
                 drop(observed);
-                advanced.expect("producer should advance before the writer is unblocked");
+                advanced.expect("producer should close before the writer is unblocked");
+                writer.join().unwrap()
             });
-            execution.finish(Outcome::Complete);
+            assert!(trace.contains("phase=Validate state=Finished(Cancelled)"));
         })
         .await;
-    assert_eq!(
-        inbox.take_updates().last().unwrap().state,
-        State::Finished(Outcome::Complete)
-    );
+    assert!(inbox.take_updates().is_empty());
 }
