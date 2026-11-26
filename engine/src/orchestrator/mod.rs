@@ -8,7 +8,7 @@ pub(crate) use crate::detectors::activity::Source;
 use crate::{
     accounts::Accounts,
     detectors::{
-        activity::{ActivityChannel, ActivitySession, Scope as DetectorScope},
+        activity::{ActivityChannel, ActivityPublisher, ActivitySession, Scope as DetectorScope},
         context::File,
         observation::ObservationCoverage,
     },
@@ -91,6 +91,9 @@ impl OrchestratorHandle {
     }
     pub(crate) fn detector_session(&self, source: Source) -> ActivitySession {
         self.detector_activities.open(source)
+    }
+    pub(crate) fn shared_detector_activity(&self) -> ActivityPublisher {
+        self.detector_activities.shared()
     }
     /// Backpressure keeps observations bounded; a stopped worker rejects new work.
     pub(crate) async fn submit(&self, file: File) -> Result<(), SynchronizationErrorKind> {

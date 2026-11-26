@@ -1,8 +1,8 @@
 //! Engine-owned source tasks. Only normalized observations enter the Context facade.
 use super::{
     activity::{
-        ActivityGuard, ActivityPublisher, ActivitySession, Details, Phase, Progress, ScanUpdate,
-        Source, State, Unit, Wait,
+        ActivityGuard, ActivityPublisher, ActivitySession, Details, Origin, Phase, Progress,
+        ScanUpdate, Source, State, Unit, Wait,
     },
     observation::models::{CaptureEntries, ScopeCapture},
     observation::{
@@ -198,7 +198,11 @@ async fn deliver(
             }
             _ => None,
         };
-        let files = match detectors.clone().contextualize_batch(observation).await {
+        let files = match detectors
+            .clone()
+            .contextualize_batch(observation, &delivery)
+            .await
+        {
             Ok(file) => file,
             Err(_) => {
                 delivery.finish(State::Failed);
@@ -544,10 +548,17 @@ async fn remote(
         );
         let round = async {
             let scoped = detectors.clone();
-            let known_remote_ids = tokio::task::spawn_blocking(move || scoped.known_remote_ids())
-                .await
-                .map_err(|_| RemoteObserverError::Unavailable)?
-                .map_err(|_| RemoteObserverError::Unavailable)?;
+            let listing = observing.child_from(
+                Origin::Shared,
+                Phase::ReadInventory,
+                State::Waiting(Wait::Worker),
+                Details::default(),
+            );
+            let known_remote_ids =
+                tokio::task::spawn_blocking(move || scoped.known_remote_ids(listing))
+                    .await
+                    .map_err(|_| RemoteObserverError::Unavailable)?
+                    .map_err(|_| RemoteObserverError::Unavailable)?;
             observing.transition(State::Waiting(Wait::Ownership), Details::default);
             let _lease = tokio::select! {biased;_=cancelled(cancel)=>return Err(RemoteObserverError::Cancelled),lease=ownership.clone().read_owned()=>lease};
             observing.transition(State::Waiting(Wait::Authorization), Details::default);

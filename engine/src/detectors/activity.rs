@@ -42,6 +42,11 @@ pub(crate) enum Phase {
     ReadMetadata,
     VerifyContent,
     ResolveAncestry,
+    Contextualize,
+    ReadInventory,
+    ResolveIdentities,
+    ReuseContext,
+    Audit,
     Deliver,
     Idle,
 }
@@ -54,6 +59,8 @@ pub(crate) enum Wait {
     ObserverState,
     Provider,
     Continuation,
+    Context,
+    Inventory,
     Queue,
     Refresh,
     Retry,
@@ -85,6 +92,8 @@ pub(crate) enum Unit {
     Changes,
     ItemsChecked,
     Ancestors,
+    Records,
+    Queries,
     Bytes,
 }
 
@@ -192,7 +201,7 @@ struct Slot {
 }
 
 struct Active {
-    source: Source,
+    source: Option<Source>,
     generation: ActivityId,
     activity: Activity,
 }
@@ -233,14 +242,24 @@ impl ActivityChannel {
         let mut latest = self.latest.lock().unwrap();
         let generation = latest.next_id();
         if !latest.closed {
-            latest.active.retain(|_, active| active.source != source);
+            latest
+                .active
+                .retain(|_, active| active.source != Some(source));
             latest.sources[source.index()].generation = Some(generation);
         }
         ActivitySession(ActivityPublisher {
             channel: self.clone(),
-            source,
+            source: Some(source),
             generation,
         })
+    }
+
+    pub(crate) fn shared(self: &Arc<Self>) -> ActivityPublisher {
+        ActivityPublisher {
+            channel: self.clone(),
+            source: None,
+            generation: ActivityId(0),
+        }
     }
 
     pub(crate) fn close(&self) {
@@ -356,7 +375,8 @@ impl ActivitySession {
 impl Drop for ActivitySession {
     fn drop(&mut self) {
         let mut latest = self.0.channel.latest.lock().unwrap();
-        let slot = &mut latest.sources[self.0.source.index()];
+        let source = self.0.source.expect("a source session owns a slot");
+        let slot = &mut latest.sources[source.index()];
         if slot.generation == Some(self.0.generation) {
             slot.generation = None;
             latest
@@ -369,13 +389,15 @@ impl Drop for ActivitySession {
 #[derive(Clone)]
 pub(crate) struct ActivityPublisher {
     channel: Arc<ActivityChannel>,
-    source: Source,
+    source: Option<Source>,
     generation: ActivityId,
 }
 
 impl ActivityPublisher {
     pub(crate) fn scan(&self, update: ScanUpdate) {
-        self.channel.scan(self.source, self.generation, update);
+        if let Some(source) = self.source {
+            self.channel.scan(source, self.generation, update);
+        }
     }
 
     pub(crate) fn begin(
@@ -388,7 +410,10 @@ impl ActivityPublisher {
     ) -> ActivityGuard {
         let id = {
             let mut latest = self.channel.latest.lock().unwrap();
-            if latest.sources[self.source.index()].generation != Some(self.generation)
+            if latest.closed
+                || self.source.is_some_and(|source| {
+                    latest.sources[source.index()].generation != Some(self.generation)
+                })
                 || latest.active.len() >= MAX_ACTIVE
             {
                 return ActivityGuard {
@@ -447,13 +472,15 @@ impl ActivityPublisher {
             if let Some(details) = sample.value.details {
                 activity.details = details;
             }
-            sample.value.scan.is_some_and(|scan| {
-                apply_scan(
-                    self.source,
-                    &mut latest.sources[self.source.index()],
-                    ScanUpdate::Progress(scan),
-                )
-            })
+            self.source
+                .zip(sample.value.scan)
+                .is_some_and(|(source, scan)| {
+                    apply_scan(
+                        source,
+                        &mut latest.sources[source.index()],
+                        ScanUpdate::Progress(scan),
+                    )
+                })
         };
         if scan_changed {
             self.channel.changed.notify_one();

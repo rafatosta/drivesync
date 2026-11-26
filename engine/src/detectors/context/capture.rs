@@ -15,20 +15,34 @@ pub(super) struct Captures {
     consolidated: Option<(Vec<InventorySnapshot>, Vec<File>)>,
 }
 impl Context {
+    #[cfg(test)]
     pub(crate) fn snapshots(&self) -> Result<Vec<InventorySnapshot>, ContextError> {
-        let mut snapshots = self
-            .inventory
-            .enumerate(InventoryScopeQuery {
-                account_id: self.config.account_id.clone(),
-                sync_root_id: self.config.sync_root_id.clone(),
+        self.snapshots_with(Trace::default())
+    }
+
+    pub(super) fn snapshots_with(
+        &self,
+        trace: Trace<'_>,
+    ) -> Result<Vec<InventorySnapshot>, ContextError> {
+        let mut snapshots = trace
+            .wait(Resource::Inventory, || {
+                self.inventory.enumerate(InventoryScopeQuery {
+                    account_id: self.config.account_id.clone(),
+                    sync_root_id: self.config.sync_root_id.clone(),
+                })
             })
             .map_err(|_| ContextError::InventoryUnavailable)?;
+        let mut filtering = trace.batch(Work::InventoryRecords, snapshots.len());
         snapshots.retain(|snapshot| {
-            !snapshot
+            let keep = !snapshot
                 .local_path
                 .as_deref()
-                .is_some_and(crate::projections::libreoffice_lock_path)
+                .is_some_and(crate::projections::libreoffice_lock_path);
+            filtering.advance();
+            keep
         });
+        filtering.finish();
+        let mut validating = trace.batch(Work::InventoryRecords, snapshots.len());
         for snapshot in &snapshots {
             if let Some(local) = &snapshot.baseline.local {
                 if let Some(path) = &local.path {
@@ -38,15 +52,41 @@ impl Context {
                     validate_relative_path(parent)?;
                 }
             }
+            validating.advance();
         }
+        validating.finish();
         Ok(snapshots)
     }
 
-    /// An empty complete round is still evidence; partial rounds replace and invalidate old facts.
+    pub(in crate::detectors) fn known_remote_ids(
+        &self,
+        activity: &ActivityGuard,
+    ) -> Result<Vec<RemoteId>, ContextError> {
+        let trace = Trace::new(activity);
+        let snapshots = self.snapshots_with(trace)?;
+        let mut selecting = trace.batch(Work::InventoryRecords, snapshots.len());
+        let ids = snapshots
+            .into_iter()
+            .inspect(|_| selecting.advance())
+            .filter_map(|snapshot| snapshot.identity.remote_id)
+            .collect();
+        selecting.finish();
+        Ok(ids)
+    }
+
+    #[cfg(test)]
     pub(super) fn build_capture(&self, capture: ScopeCapture) -> Result<Vec<File>, ContextError> {
-        let _round = self
-            .rounds
-            .lock()
+        self.build_capture_with(capture, Trace::default())
+    }
+
+    /// An empty complete round is still evidence; partial rounds replace and invalidate old facts.
+    pub(super) fn build_capture_with(
+        &self,
+        capture: ScopeCapture,
+        trace: Trace<'_>,
+    ) -> Result<Vec<File>, ContextError> {
+        let _round = trace
+            .wait(Resource::Context, || self.rounds.lock())
             .map_err(|_| ContextError::InvalidCapture)?;
         if capture.account_id != self.config.account_id
             || capture.provider_id != self.config.provider_id
@@ -57,6 +97,13 @@ impl Context {
             return Err(ContextError::ScopeMismatch);
         }
         let mut keys = BTreeSet::new();
+        let mut validating = trace.batch(
+            Work::Validate,
+            match &capture.entries {
+                CaptureEntries::Local(entries) => entries.len(),
+                CaptureEntries::Remote(entries) => entries.len(),
+            },
+        );
         match &capture.entries {
             CaptureEntries::Local(entries) => {
                 for entry in entries {
@@ -74,6 +121,7 @@ impl Context {
                     {
                         return Err(ContextError::InvalidCapture);
                     }
+                    validating.advance();
                 }
             }
             CaptureEntries::Remote(entries) => {
@@ -93,13 +141,14 @@ impl Context {
                     {
                         return Err(ContextError::InvalidCapture);
                     }
+                    validating.advance();
                 }
             }
         }
-        let snapshots = self.snapshots()?;
-        let mut captures = self
-            .captures
-            .lock()
+        validating.finish();
+        let snapshots = self.snapshots_with(trace)?;
+        let mut captures = trace
+            .wait(Resource::Context, || self.captures.lock())
             .map_err(|_| ContextError::InvalidCapture)?;
         let previous = match &capture.entries {
             CaptureEntries::Local(_) => &mut captures.local,
@@ -113,7 +162,7 @@ impl Context {
         }
         let unchanged = previous
             .as_ref()
-            .is_some_and(|previous| same_evidence(previous, &capture));
+            .is_some_and(|previous| same_evidence(previous, &capture, trace));
         *previous = Some(capture);
         if unchanged
             && captures
@@ -128,34 +177,45 @@ impl Context {
             if let Some((previous, files)) = &captures.consolidated {
                 if *previous == snapshots {
                     let _sample = crate::performance::Sample::begin("context_capture_reuse");
-                    return Ok(captures.republish(files.clone()));
+                    return Ok(captures.republish(files.clone(), trace));
                 }
             }
         }
         // Per-item cache entries from a previous generation must not survive capture invalidation.
-        *self
-            .cache
-            .lock()
+        *trace
+            .wait(Resource::Context, || self.cache.lock())
             .map_err(|_| ContextError::InvalidCapture)? = cache::Cache::default();
-        let observations = captures.observations();
-        let view = View::new(&captures, &snapshots, &self.config.remote_root_id);
+        let observations = captures.observations(trace);
+        let view = View::new(&captures, &snapshots, &self.config.remote_root_id, trace);
+        let queries = std::cell::Cell::new(0);
+        let building = trace.count_lookups(&queries);
+        let mut batch = building.batch(Work::Build, observations.len());
         let mut files = observations
             .into_iter()
             .map(|observation| {
-                let mut file = self.build_item(observation)?;
+                let mut file = self.build_item(observation, building)?;
                 self.enrich_view(&mut file, &view);
+                batch.advance();
                 Ok(file)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        batch.finish();
         let mut identities = BTreeSet::new();
+        let mut deduplicating = trace.batch(Work::Index, files.len());
         files.retain(|file| {
-            file.identity
+            let unique = file
+                .identity
                 .item_id
                 .as_ref()
-                .is_none_or(|id| identities.insert(id.clone()))
+                .is_none_or(|id| identities.insert(id.clone()));
+            deduplicating.advance();
+            unique
         });
+        deduplicating.finish();
         // Reopened Inventory records are revisited even when neither capture lists them.
+        let mut revisiting = trace.batch(Work::InventoryRecords, snapshots.len());
         for snapshot in &snapshots {
+            revisiting.advance();
             if snapshot
                 .identity
                 .item_id
@@ -197,6 +257,7 @@ impl Context {
             self.enrich_view(&mut file, &view);
             files.push(file);
         }
+        revisiting.finish();
         // A newly relocated parent's durable path must be confirmed before its descendants.
         // Otherwise a child's unmet parent precondition can repeatedly invalidate the whole batch.
         files.sort_by_key(|file| {
@@ -213,16 +274,15 @@ impl Context {
         Ok(files)
     }
 
-    pub(super) fn enrich(&self, file: &mut File) -> Result<(), ContextError> {
-        let captures = self
-            .captures
-            .lock()
+    pub(super) fn enrich(&self, file: &mut File, trace: Trace<'_>) -> Result<(), ContextError> {
+        let captures = trace
+            .wait(Resource::Context, || self.captures.lock())
             .map_err(|_| ContextError::InvalidCapture)?;
         if captures.local.is_none() && captures.remote.is_none() {
             return Ok(());
         }
-        let snapshots = self.snapshots()?;
-        let view = View::new(&captures, &snapshots, &self.config.remote_root_id);
+        let snapshots = self.snapshots_with(trace)?;
+        let view = View::new(&captures, &snapshots, &self.config.remote_root_id, trace);
         self.enrich_view(file, &view);
         Ok(())
     }
@@ -616,9 +676,14 @@ impl<'a> View<'a> {
         entries.next().is_none().then_some(entry)
     }
 
-    fn new(captures: &'a Captures, snapshots: &'a [InventorySnapshot], root: &RemoteId) -> Self {
-        let local = captures.locals();
-        let remote = captures.remotes();
+    fn new(
+        captures: &'a Captures,
+        snapshots: &'a [InventorySnapshot],
+        root: &RemoteId,
+        trace: Trace<'_>,
+    ) -> Self {
+        let local = captures.locals(trace);
+        let remote = captures.remotes(trace);
         let local_complete = captures
             .local
             .as_ref()
@@ -634,19 +699,25 @@ impl<'a> View<'a> {
                 .iter()
                 .filter_map(|snapshot| snapshot.identity.remote_id.as_ref())
                 .all(|id| remote.contains_key(id));
+        let mut local_indexes = trace.batch(Work::Index, local.len() * 2);
         let local_identities = local
             .values()
+            .inspect(|_| local_indexes.advance())
             .filter_map(|entry| identity_key(&entry.identity))
             .collect();
         let mut incarnations: BTreeMap<IdentityKey, Vec<&LocalObservation>> = BTreeMap::new();
         for entry in local.values() {
+            local_indexes.advance();
             if let Some(key) = identity_key(&entry.identity) {
                 incarnations.entry(key).or_default().push(*entry);
             }
         }
+        local_indexes.finish();
+        let mut inventory_indexes = trace.batch(Work::Index, snapshots.len() * 2);
         let mut owners = BTreeMap::new();
         let mut persisted_identities = BTreeMap::new();
         for snapshot in snapshots {
+            inventory_indexes.advance();
             if let Some(path) = &snapshot.local_path {
                 *owners.entry(path.clone()).or_insert(0) += 1;
             }
@@ -656,13 +727,17 @@ impl<'a> View<'a> {
         }
         let mut grouped: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for snapshot in snapshots {
+            inventory_indexes.advance();
             if let Some(id) = &snapshot.identity.remote_id {
                 grouped.entry(id).or_default().push(snapshot);
             }
         }
+        inventory_indexes.finish();
+        let mut associations = trace.batch(Work::Index, grouped.len());
         let mut associated = BTreeMap::from([(root.clone(), Path::new())]);
         let mut local_parents: BTreeMap<Path, Vec<RemoteId>> = BTreeMap::new();
         for (id, records) in grouped {
+            associations.advance();
             if records.len() != 1 {
                 continue;
             }
@@ -709,11 +784,14 @@ impl<'a> View<'a> {
                     .push(id.clone());
             }
         }
+        associations.finish();
+        let mut remote_indexes = trace.batch(Work::Index, remote.len());
         let mut matches: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let mut projected = BTreeMap::new();
         let mut projected_matches: BTreeMap<_, Vec<_>> = BTreeMap::new();
         let mut candidates: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for (id, entry) in &remote {
+            remote_indexes.advance();
             if entry.state != FileState::Present || entry.trashed != Evidence::Known(false) {
                 continue;
             }
@@ -739,6 +817,7 @@ impl<'a> View<'a> {
                 candidates.entry(path).or_default().push(*entry);
             }
         }
+        remote_indexes.finish();
         Self {
             snapshots,
             captures,
@@ -759,7 +838,7 @@ impl<'a> View<'a> {
         }
     }
 }
-fn same_evidence(previous: &ScopeCapture, incoming: &ScopeCapture) -> bool {
+fn same_evidence(previous: &ScopeCapture, incoming: &ScopeCapture, trace: Trace<'_>) -> bool {
     if previous.coverage != ObservationCoverage::Complete
         || incoming.coverage != ObservationCoverage::Complete
     {
@@ -777,10 +856,16 @@ fn same_evidence(previous: &ScopeCapture, incoming: &ScopeCapture) -> bool {
             _ => false,
         }
     };
-    match (&previous.entries, &incoming.entries) {
+    let total = match &incoming.entries {
+        CaptureEntries::Local(entries) => entries.len(),
+        CaptureEntries::Remote(entries) => entries.len(),
+    };
+    let mut comparison = trace.batch(Work::Compare, total);
+    let equal = match (&previous.entries, &incoming.entries) {
         (CaptureEntries::Local(a), CaptureEntries::Local(b)) => {
             a.len() == b.len()
                 && a.iter().zip(b).all(|(a, b)| {
+                    comparison.advance();
                     a.previous_path == b.previous_path
                         && a.coverage == b.coverage
                         && local_state(a.clone()) == local_state(b.clone())
@@ -790,19 +875,23 @@ fn same_evidence(previous: &ScopeCapture, incoming: &ScopeCapture) -> bool {
         (CaptureEntries::Remote(a), CaptureEntries::Remote(b)) => {
             a.len() == b.len()
                 && a.iter().zip(b).all(|(a, b)| {
+                    comparison.advance();
                     a.coverage == b.coverage
                         && remote_state(a.clone()) == remote_state(b.clone())
                         && equal_event(&a.event, &b.event)
                 })
         }
         _ => false,
-    }
+    };
+    comparison.finish();
+    equal
 }
 
 impl Captures {
-    fn republish(&self, mut files: Vec<File>) -> Vec<File> {
-        let locals = self.locals();
-        let remotes = self.remotes();
+    fn republish(&self, mut files: Vec<File>, trace: Trace<'_>) -> Vec<File> {
+        let locals = self.locals(trace);
+        let remotes = self.remotes(trace);
+        let mut reuse = trace.batch(Work::Reuse, files.len());
         let local = self.local.as_ref().unwrap();
         let remote = self.remote.as_ref().unwrap();
         for file in &mut files {
@@ -832,56 +921,84 @@ impl Captures {
                     observations.remote_page_token = entry.page_token.clone();
                 }
             }
+            reuse.advance();
         }
+        reuse.finish();
         files
     }
 
-    pub(super) fn locals(&self) -> BTreeMap<Path, &LocalObservation> {
+    pub(super) fn locals(&self, trace: Trace<'_>) -> BTreeMap<Path, &LocalObservation> {
         match self.local.as_ref().map(|c| &c.entries) {
-            Some(CaptureEntries::Local(entries)) => entries
-                .iter()
-                .filter_map(|e| e.path.clone().map(|p| (p, e)))
-                .collect(),
+            Some(CaptureEntries::Local(entries)) => {
+                let mut batch = trace.batch(Work::Index, entries.len());
+                let index = entries
+                    .iter()
+                    .inspect(|_| batch.advance())
+                    .filter_map(|e| e.path.clone().map(|p| (p, e)))
+                    .collect();
+                batch.finish();
+                index
+            }
             _ => BTreeMap::new(),
         }
     }
-    pub(super) fn remotes(&self) -> BTreeMap<RemoteId, &RemoteObservation> {
+    pub(super) fn remotes(&self, trace: Trace<'_>) -> BTreeMap<RemoteId, &RemoteObservation> {
         match self.remote.as_ref().map(|c| &c.entries) {
-            Some(CaptureEntries::Remote(entries)) => entries
-                .iter()
-                .filter_map(|e| e.remote_id.clone().map(|id| (id, e)))
-                .collect(),
+            Some(CaptureEntries::Remote(entries)) => {
+                let mut batch = trace.batch(Work::Index, entries.len());
+                let index = entries
+                    .iter()
+                    .inspect(|_| batch.advance())
+                    .filter_map(|e| e.remote_id.clone().map(|id| (id, e)))
+                    .collect();
+                batch.finish();
+                index
+            }
             _ => BTreeMap::new(),
         }
     }
-    fn observations(&self) -> Vec<Observation> {
+    fn observations(&self, trace: Trace<'_>) -> Vec<Observation> {
         let mut result = Vec::new();
         if let Some(ScopeCapture {
             entries: CaptureEntries::Local(entries),
             ..
         }) = &self.local
         {
-            result.extend(entries.iter().cloned().map(|data| {
-                Observation::Local {
-                    source: if data
-                        .event
-                        .as_ref()
-                        .is_some_and(|e| e.origin == ObservationOrigin::Local)
-                    {
-                        LocalObservationSource::Watcher
-                    } else {
-                        LocalObservationSource::Scanner
-                    },
-                    data,
-                }
-            }));
+            let mut batch = trace.batch(Work::Build, entries.len());
+            result.extend(
+                entries
+                    .iter()
+                    .cloned()
+                    .inspect(|_| batch.advance())
+                    .map(|data| Observation::Local {
+                        source: if data
+                            .event
+                            .as_ref()
+                            .is_some_and(|e| e.origin == ObservationOrigin::Local)
+                        {
+                            LocalObservationSource::Watcher
+                        } else {
+                            LocalObservationSource::Scanner
+                        },
+                        data,
+                    }),
+            );
+            batch.finish();
         }
         if let Some(ScopeCapture {
             entries: CaptureEntries::Remote(entries),
             ..
         }) = &self.remote
         {
-            result.extend(entries.iter().cloned().map(Observation::Remote));
+            let mut batch = trace.batch(Work::Build, entries.len());
+            result.extend(
+                entries
+                    .iter()
+                    .cloned()
+                    .inspect(|_| batch.advance())
+                    .map(Observation::Remote),
+            );
+            batch.finish();
         }
         result
     }

@@ -7,26 +7,42 @@ use crate::{
 };
 use std::os::unix::fs::MetadataExt;
 impl Context {
+    #[cfg(test)]
     pub(crate) fn audit(
         &self,
         epoch: u64,
         expected: &LocalIdentity,
     ) -> Result<SynchronizationAudit, ContextError> {
-        let _round = self
-            .rounds
-            .lock()
+        self.audit_with(epoch, expected, Trace::default())
+    }
+
+    pub(in crate::detectors) fn audit_observed(
+        &self,
+        epoch: u64,
+        expected: &LocalIdentity,
+        activity: &ActivityGuard,
+    ) -> Result<SynchronizationAudit, ContextError> {
+        self.audit_with(epoch, expected, Trace::new(activity))
+    }
+
+    fn audit_with(
+        &self,
+        epoch: u64,
+        expected: &LocalIdentity,
+        trace: Trace<'_>,
+    ) -> Result<SynchronizationAudit, ContextError> {
+        let _round = trace
+            .wait(Resource::Context, || self.rounds.lock())
             .map_err(|_| ContextError::InvalidCapture)?;
-        let _execution = self
-            .inventory
-            .execution_lease()
+        let _execution = trace
+            .wait(Resource::Inventory, || self.inventory.execution_lease())
             .map_err(|_| ContextError::InventoryUnavailable)?;
-        let captures = self
-            .captures
-            .lock()
+        let captures = trace
+            .wait(Resource::Context, || self.captures.lock())
             .map_err(|_| ContextError::InvalidCapture)?;
-        let snapshots = self.snapshots()?;
-        let local = captures.locals();
-        let remote = captures.remotes();
+        let snapshots = self.snapshots_with(trace)?;
+        let local = captures.locals(trace);
+        let remote = captures.remotes(trace);
         let root = std::fs::symlink_metadata(&self.config.local_root.0)
             .map_err(|_| ContextError::InvalidCapture)?;
         let root_matches = root.is_dir()
@@ -59,7 +75,9 @@ impl Context {
         };
         let mut owned_local = std::collections::BTreeSet::new();
         let mut owned_remote = std::collections::BTreeSet::new();
+        let mut records = trace.batch(Work::Audit, snapshots.len());
         for snapshot in &snapshots {
+            records.advance();
             audit.unconfirmed_operations += snapshot
                 .pending_operations
                 .iter()
@@ -122,9 +140,12 @@ impl Context {
                 }
             }
         }
+        records.finish();
+        let mut checking = trace.batch(Work::Audit, local.len() + remote.len());
         let digest_valid = |checksum: &Evidence<crate::models::Checksum>| matches!(checksum,Evidence::Known(c) if c.algorithm=="sha256"&&c.value.len()==64&&c.value.bytes().all(|b|b.is_ascii_hexdigit()));
-        let representable=local.values().all(|l| matches!(&l.name,Evidence::Known(n) if crate::projections::valid_name(n))&&matches!(l.kind,Evidence::Known(crate::models::FileKind::Regular|crate::models::FileKind::Directory))&&(l.kind!=Evidence::Known(crate::models::FileKind::Regular)||digest_valid(&l.checksum)))
-            && remote.values().all(|r| matches!((&r.name,&r.mime_type),(Evidence::Known(n),Evidence::Known(m)) if crate::projections::local_name(n,m).is_some()&&match crate::projections::kind(m) {crate::projections::RemoteKind::Binary=>digest_valid(&r.checksum)&&matches!(r.size,Evidence::Known(_)),crate::projections::RemoteKind::Directory|crate::projections::RemoteKind::Workspace=>true,_=>false}));
+        let representable=local.values().inspect(|_| checking.advance()).all(|l| matches!(&l.name,Evidence::Known(n) if crate::projections::valid_name(n))&&matches!(l.kind,Evidence::Known(crate::models::FileKind::Regular|crate::models::FileKind::Directory))&&(l.kind!=Evidence::Known(crate::models::FileKind::Regular)||digest_valid(&l.checksum)))
+            && remote.values().inspect(|_| checking.advance()).all(|r| matches!((&r.name,&r.mime_type),(Evidence::Known(n),Evidence::Known(m)) if crate::projections::local_name(n,m).is_some()&&match crate::projections::kind(m) {crate::projections::RemoteKind::Binary=>digest_valid(&r.checksum)&&matches!(r.size,Evidence::Known(_)),crate::projections::RemoteKind::Directory|crate::projections::RemoteKind::Workspace=>true,_=>false}));
+        checking.finish();
         // Every observed item must have exactly one proven replica owner; names never supply identity.
         let local_owned =
             owned_local.len() == local.len() && local.keys().all(|p| owned_local.contains(p));

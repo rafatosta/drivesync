@@ -1,11 +1,13 @@
 //! Consolidates one normalized observation with persisted facts into an Analyzer-ready file.
 
+mod activity;
 mod audit;
 mod cache;
 mod capture;
 mod models;
 
 use crate::{
+    detectors::activity::ActivityGuard,
     detectors::observation::{
         LocalObservation, LocalObservationSource, Observation, ObservationCoverage,
         RemoteObservation,
@@ -16,6 +18,7 @@ use crate::{
     },
     models::{Evidence, FileIdentity, FileState, ObservationOrigin, Path, SyncRootId},
 };
+use activity::{Resource, Trace, Work};
 use std::path::Component;
 
 #[allow(unused_imports)]
@@ -59,22 +62,44 @@ impl Context {
     }
 
     /// Consumes only normalized observations; a completed scope can recheck many known items.
+    pub(super) fn consolidate_observed(
+        &self,
+        observation: Observation,
+        activity: &ActivityGuard,
+    ) -> Result<Vec<File>, ContextError> {
+        self.consolidate_with(observation, Trace::new(activity))
+    }
+
+    #[cfg(test)]
     pub(crate) fn consolidate(&self, observation: Observation) -> Result<Vec<File>, ContextError> {
+        self.consolidate_with(observation, Trace::default())
+    }
+
+    fn consolidate_with(
+        &self,
+        observation: Observation,
+        trace: Trace<'_>,
+    ) -> Result<Vec<File>, ContextError> {
         let _sample = crate::performance::Sample::begin("context");
         match observation {
-            Observation::Capture(capture) => self.build_capture(*capture),
-            observation => self.build(observation).map(|file| vec![file]),
+            Observation::Capture(capture) => self.build_capture_with(*capture, trace),
+            observation => self.build_with(observation, trace).map(|file| vec![file]),
         }
     }
 
-    /// Consolidates one observation without inferring missing evidence or choosing an action.
+    #[cfg(test)]
     fn build(&self, observation: Observation) -> Result<File, ContextError> {
-        let mut file = self.build_item(observation)?;
-        self.enrich(&mut file)?;
+        self.build_with(observation, Trace::default())
+    }
+
+    /// Consolidates one observation without inferring missing evidence or choosing an action.
+    fn build_with(&self, observation: Observation, trace: Trace<'_>) -> Result<File, ContextError> {
+        let mut file = self.build_item(observation, trace)?;
+        self.enrich(&mut file, trace)?;
         Ok(file)
     }
 
-    fn build_item(&self, observation: Observation) -> Result<File, ContextError> {
+    fn build_item(&self, observation: Observation, trace: Trace<'_>) -> Result<File, ContextError> {
         let (sync_root_id, local, remote, observations, remote_id, lookup_local_identity, path) =
             match observation {
                 Observation::Capture(_) => return Err(ContextError::InvalidCapture),
@@ -166,7 +191,7 @@ impl Context {
             (None, _, None) => None,
         };
         let lookup_result = lookup
-            .map(|request| self.inventory.lookup(request))
+            .map(|request| trace.lookup(|| self.inventory.lookup(request)))
             .map(|result| (result.status, result.snapshot));
         let (lookup_status, snapshot) =
             match lookup_result.unwrap_or((InventoryLookupStatus::Error, None)) {
@@ -243,7 +268,7 @@ impl Context {
             inventory_revision,
             association_candidates: Vec::new(),
         };
-        if let Ok(mut cache) = self.cache.lock() {
+        if let Ok(mut cache) = trace.cache(|| self.cache.lock()) {
             cache.consolidate(&mut file);
         }
         Ok(file)
