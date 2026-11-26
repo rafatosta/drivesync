@@ -184,3 +184,35 @@ than presented as an operation still running.
 Each source reports reading, complete, retry scheduled (with the source loop's retry time),
 or failed. These values are independent of an item awaiting verification. Stop and worker
 failure clear work telemetry, and late source reports cannot revive a stopped worker's activity.
+
+## Detector execution audit (baseline `07471f0`)
+
+The local and remote source tasks use a bounded functional queue to submit contextualized
+files, source health and complete capture epochs. Local I/O and Context run on blocking
+workers. Google collection runs on the executor under the account ownership read lease
+and the specialist's async state mutex. Context serializes retained captures, then reads
+Inventory and builds an in-memory view. Neither sampled progress nor finishing a telemetry
+phase establishes coverage. In particular, a page-limited capture retains its original
+epoch and cannot authorize absence.
+
+| Owner | Work and location | Progress available during execution | Waiting, failure or termination |
+| --- | --- | --- | --- |
+| Sources | `sources.rs`: startup, source loops, `deliver` | Observations received and files admitted, with batch totals | Blocking workers, account ownership and authorization, refresh/poll/retry, queue capacity, worker exit |
+| Scanner | `observation/scanner/{mod,watch}.rs`: root, event batches, dirty paths, full directory traversal | Directory reads, entries visited/completed, snapshot size, reused hashes | Native watch invalidation, inaccessible/unstable entries, limits and cancellation |
+| Scanner | `scanner/mod.rs`: `hash` and `digest` | Bytes from existing read buffer, total from verified file metadata | Open/read errors, identity checks and per-read cancellation |
+| LocalObserver | `observation/local/mod.rs`: `poll`, `diff`, `unavailable` | Entries materialized, compared and reclassified, known collection sizes | Incomplete snapshots, scope recovery and scan errors |
+| RemoteObserver | `observation/remote/interfaces.rs`: scoped dispatch | Per-round activity, provider-neutral status | Scope/authorization rejection and cancellation |
+| Google specialist | `observation/remote/google/mod.rs`: root/checkpoint, `round`, `probe`, normalization | Full pages across rounds, incremental pages and actual changes, directory frontier, verified items | API responses, specialist state, cursor recovery, partial coverage and bounded retries |
+| Context | `context/{mod,capture,cache,audit}.rs`: individual and batch consolidation, snapshots, view/identity indexes and audit | Existing capture and Inventory record counts, files constructed, records audited | Capture/cache locks, Inventory reads, stale/scope failures and reused captures |
+
+The baseline's local counter advances before processing a selected entry and its completed
+display count is the size of the returned snapshot. Google displays cumulative full-capture
+pages or per-round incremental pages and the known-item count. Its folder position is resolved
+from captured ancestry. The public `work` projection and Analyzer history share a status
+`watch`; `pending` is independent. The Scanner and Google callbacks currently publish to
+the Orchestrator directly. Sampling takes a mutex across the callback and there is no
+activity identity inside a scan. Shutdown guards the status, while individual phases lack
+their own terminal cleanup. The existing paused-operator test covers display bypass and
+absence of coverage, leaving intermediate progress and scoped lifetime for the migration.
+
+Baseline in GNOME SDK 50: 737 tests passed and 35 were ignored by the workspace suite.
