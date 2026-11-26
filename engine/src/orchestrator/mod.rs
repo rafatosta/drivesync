@@ -8,9 +8,9 @@ pub(crate) use crate::detectors::activity::Source;
 use crate::{
     accounts::Accounts,
     detectors::{
-        activity::{ActivityChannel, ActivitySession, ScanUpdate, Scope as DetectorScope},
+        activity::{ActivityChannel, ActivitySession, Scope as DetectorScope},
         context::File,
-        observation::{ObservationCoverage, ScanProgress},
+        observation::ObservationCoverage,
     },
     inventory::{models::WriteStatus, Inventory, InventoryConfig},
     models::{DateTime, Evidence, Id},
@@ -92,28 +92,6 @@ impl OrchestratorHandle {
     pub(crate) fn detector_session(&self, source: Source) -> ActivitySession {
         self.detector_activities.open(source)
     }
-    /// Display-only source telemetry bypasses the execution queue and never grants coverage.
-    pub(crate) fn scan_progress(
-        &self,
-        source: Source,
-        path: Option<crate::models::Path>,
-        items: u64,
-        pages: u64,
-    ) {
-        self.detector_activities.scan_legacy(
-            source,
-            ScanUpdate::Progress(ScanProgress { path, items, pages }),
-        );
-    }
-    pub(crate) fn scan_state(
-        &self,
-        source: Source,
-        state: SynchronizationScanState,
-        items: Option<u64>,
-    ) {
-        self.detector_activities
-            .scan_legacy(source, ScanUpdate::State(state, items));
-    }
     /// Backpressure keeps observations bounded; a stopped worker rejects new work.
     pub(crate) async fn submit(&self, file: File) -> Result<(), SynchronizationErrorKind> {
         if *self.stop.borrow() || self.is_finished() {
@@ -130,22 +108,6 @@ impl OrchestratorHandle {
         scanning: bool,
         issue: Option<SynchronizationIssue>,
     ) -> Result<(), SynchronizationErrorKind> {
-        self.scan_state(
-            source,
-            if scanning {
-                SynchronizationScanState::Reading
-            } else if issue
-                .as_ref()
-                .is_some_and(|issue| issue.kind == SynchronizationIssueKind::WorkerFailed)
-            {
-                SynchronizationScanState::Failed
-            } else if issue.is_some() {
-                SynchronizationScanState::RetryScheduled
-            } else {
-                SynchronizationScanState::Complete
-            },
-            None,
-        );
         self.files
             .send(Command::Source(source, scanning, issue))
             .await

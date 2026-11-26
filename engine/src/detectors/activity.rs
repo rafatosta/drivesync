@@ -34,6 +34,8 @@ pub(crate) enum Phase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Wait {
     Worker,
+    Ownership,
+    Authorization,
     Queue,
     Refresh,
     Retry,
@@ -219,14 +221,14 @@ impl ActivityChannel {
         )
     }
 
-    fn scan(&self, source: Source, generation: Option<ActivityId>, update: ScanUpdate) {
+    fn scan(&self, source: Source, generation: ActivityId, update: ScanUpdate) {
         let changed = {
             let mut latest = self.latest.lock().unwrap();
             if latest.closed {
                 return;
             }
             let slot = &mut latest.sources[source.index()];
-            if generation.is_some() && slot.generation != generation {
+            if slot.generation != Some(generation) {
                 return;
             }
             apply_scan(source, slot, update)
@@ -234,11 +236,6 @@ impl ActivityChannel {
         if changed {
             self.changed.notify_one();
         }
-    }
-
-    /// Temporary bridge for the pre-session producers.
-    pub(crate) fn scan_legacy(&self, source: Source, update: ScanUpdate) {
-        self.scan(source, None, update);
     }
 }
 
@@ -334,8 +331,7 @@ pub(crate) struct ActivityPublisher {
 
 impl ActivityPublisher {
     pub(crate) fn scan(&self, update: ScanUpdate) {
-        self.channel
-            .scan(self.source, Some(self.generation), update);
+        self.channel.scan(self.source, self.generation, update);
     }
 
     pub(crate) fn begin(
