@@ -302,11 +302,7 @@ async fn local(worker: Arc<SourceWorker>) {
                 result
             })
             .await;
-            if let Ok(Ok(mut scanner)) = scanner {
-                let reporting = local.clone();
-                scanner.set_progress(super::observation::ProgressReporter::new(move |sample| {
-                    reporting.scan(ScanUpdate::Progress(sample.value));
-                }));
+            if let Ok(Ok(scanner)) = scanner {
                 observer = Some(Arc::new(Mutex::new(LocalObserver::new(scanner))));
             }
         }
@@ -355,7 +351,7 @@ async fn local(worker: Arc<SourceWorker>) {
         let round = tokio::task::spawn_blocking(move || {
             let mut observer = current.lock().unwrap();
             observing.transition(State::Running, Details::default);
-            match observer.poll(&token) {
+            match observer.poll(&token, Some(&observing)) {
                 Ok((_, coverage)) => {
                     let snapshot = observer.snapshot();
                     observing.transition(State::Running, || {

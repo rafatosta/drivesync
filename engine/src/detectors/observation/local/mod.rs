@@ -4,7 +4,8 @@ use super::{
     scanner::{now, ScanError, ScanResult, Scanner},
     LocalObservation, LocalObservationSource, Observation, ObservationCoverage,
 };
-use crate::models::*;
+use crate::{detectors::activity::ActivityGuard, models::*};
+mod activity;
 use std::collections::BTreeMap;
 /// Retains only the last complete snapshot. Partial rounds cannot produce removal evidence.
 pub(crate) struct LocalObserver {
@@ -51,9 +52,13 @@ impl LocalObserver {
     pub(crate) fn poll(
         &mut self,
         cancel: &CancellationToken,
+        activity: Option<&ActivityGuard>,
     ) -> Result<(Vec<Observation>, ObservationCoverage), ScanError> {
+        self.scanner.set_progress(activity.map(activity::scanner));
         let prior = self.previous.as_ref().filter(|_| !self.recheck);
-        let scan = match self.scanner.poll(prior, cancel) {
+        let scan = self.scanner.poll(prior, cancel);
+        self.scanner.set_progress(None);
+        let scan = match scan {
             Ok(scan) => scan,
             Err(error) => {
                 self.recheck = true;

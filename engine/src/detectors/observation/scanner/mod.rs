@@ -1,4 +1,5 @@
 //! Read-only descriptor-anchored local inventories. A snapshot never creates a sync baseline.
+pub(super) mod activity;
 mod watch;
 
 use super::{
@@ -63,8 +64,8 @@ pub(crate) struct ScanResult {
 }
 /// Pins the configured root and rejects later path substitution.
 pub(crate) struct Scanner {
-    progress: Option<super::ProgressReporter>,
-    seen: Cell<u64>,
+    progress: Option<activity::Reporter>,
+    traversal: Cell<activity::Traversal>,
     root: File,
     absolute: PathBuf,
     sync_root_id: SyncRootId,
@@ -107,7 +108,7 @@ impl Scanner {
     pub(crate) fn open(path: PathBuf, sync_root_id: SyncRootId) -> Result<Self, ScanError> {
         Ok(Self {
             progress: None,
-            seen: Cell::new(0),
+            traversal: Cell::default(),
             root: root(&path)?,
             absolute: path,
             sync_root_id,
@@ -116,17 +117,26 @@ impl Scanner {
             watcher: RefCell::default(),
         })
     }
-    pub(crate) fn set_progress(&mut self, progress: super::ProgressReporter) {
-        self.progress = Some(progress);
+    pub(super) fn set_progress(&mut self, progress: Option<activity::Reporter>) {
+        self.progress = progress;
     }
-    fn report(&self, path: &StdPath) {
-        if let Some(progress) = &self.progress {
-            progress.report(|| super::progress::ScanProgress {
-                path: Some(path.to_path_buf()),
-                items: self.seen.get(),
-                pages: 0,
-            });
+
+    fn emit(&self, event: activity::Event<'_>) {
+        if let Some(report) = &self.progress {
+            report(event);
         }
+    }
+
+    fn count(&self, update: impl FnOnce(&mut activity::Traversal)) {
+        if self.progress.is_some() {
+            let mut counts = self.traversal.get();
+            update(&mut counts);
+            self.traversal.set(counts);
+        }
+    }
+
+    fn report(&self, path: &StdPath) {
+        self.emit(activity::Event::Position(path, self.traversal.get()));
     }
     /// Raise a soft collection budget on the next complete retry; hard exhaustion remains explicit Partial.
     pub(crate) fn expand_limit(&mut self) -> bool {
@@ -159,13 +169,26 @@ impl Scanner {
             self.hashes.take();
             return Err(ScanError::Cancelled);
         }
-        self.seen.set(0);
-        if let Some(previous) = previous {
-            if let Some(scan) = self.scan_dirty(previous, cancel)? {
-                return Ok(scan);
+        self.traversal.set(activity::Traversal::default());
+        let result = (|| {
+            if let Some(previous) = previous {
+                if let Some(scan) = self.scan_dirty(previous, cancel)? {
+                    return Ok(scan);
+                }
             }
+            self.scan(cancel)
+        })();
+        if let Ok(scan) = &result {
+            self.count(|counts| counts.snapshot = scan.entries.len() as u64);
         }
-        self.scan(cancel)
+        self.emit(activity::Event::Final(
+            self.traversal.get(),
+            result
+                .as_ref()
+                .map(|scan| scan.coverage)
+                .map_err(|error| *error),
+        ));
+        result
     }
 
     fn check_root(&self) -> Result<std::fs::Metadata, ScanError> {
@@ -192,15 +215,24 @@ impl Scanner {
             Some(Ok(dirty)) => dirty,
             Some(Err(watch::Rebuild::Coverage)) => {
                 self.hashes.take();
+                self.emit(activity::Event::Rebuild(activity::Rebuild::Coverage));
                 return Ok(None);
             }
-            Some(Err(watch::Rebuild::Namespace)) | None => return Ok(None),
+            Some(Err(watch::Rebuild::Namespace)) => {
+                self.emit(activity::Event::Rebuild(activity::Rebuild::Namespace));
+                return Ok(None);
+            }
+            None => {
+                self.emit(activity::Event::Rebuild(activity::Rebuild::NoCurrentWatch));
+                return Ok(None);
+            }
         };
         let _sample = crate::performance::Sample::begin("local_incremental_scan");
         self.check_root()?;
         let mut entries = previous.clone();
         let mut changed_hashes = BTreeMap::new();
         for (path, namespace_changed) in dirty {
+            self.count(|counts| counts.visited += 1);
             if !self.recheck_path(
                 previous,
                 &mut entries,
@@ -209,8 +241,10 @@ impl Scanner {
                 namespace_changed,
                 cancel,
             )? {
+                self.emit(activity::Event::Rebuild(activity::Rebuild::Namespace));
                 return Ok(None);
             }
+            self.count(|counts| counts.snapshot = entries.len() as u64);
         }
         self.check_root()?;
         if entries.len() > self.max_items {
@@ -355,6 +389,7 @@ impl Scanner {
                 }
             };
             for entry in listing {
+                self.count(|counts| counts.visited += 1);
                 if cancel.is_cancelled() {
                     return Err(ScanError::Cancelled);
                 }
@@ -402,6 +437,7 @@ impl Scanner {
                     issue(&mut result, path.clone(), problem);
                 }
                 result.entries.insert(path.clone(), entry);
+                self.count(|counts| counts.snapshot = result.entries.len() as u64);
                 if is_directory {
                     if depth >= MAX_DEPTH {
                         issue(&mut result, path, ScanIssueKind::LimitReached);
@@ -412,6 +448,7 @@ impl Scanner {
                     }
                 }
             }
+            self.count(|counts| counts.directories += 1);
             let after = directory.metadata().map_err(io_error)?;
             if stamp(&before) != stamp(&after) {
                 issue(&mut result, parent, ScanIssueKind::Unstable);
@@ -438,7 +475,7 @@ impl Scanner {
         previous: Option<&CachedHash>,
         cancel: &CancellationToken,
     ) -> Result<(LocalObservation, Option<CachedHash>, Option<ScanIssueKind>), ScanError> {
-        self.seen.set(self.seen.get().saturating_add(1));
+        self.count(|counts| counts.selected += 1);
         self.report(path);
         let name = path.file_name().ok_or(ScanError::Unavailable)?;
         let anchored = descriptor(directory).join(name);
@@ -456,7 +493,14 @@ impl Scanner {
         let mut checksum = Evidence::NotApplicable;
         let mut can_read = Evidence::NotApplicable;
         if kind == FileKind::Regular {
-            match hash(&anchored, meta, previous, cancel) {
+            match hash(&anchored, meta, previous, cancel, |event| match event {
+                HashProgress::Reused => self.count(|counts| counts.hashes_reused += 1),
+                HashProgress::Start(total) => {
+                    self.emit(activity::Event::ChecksumStart { path, total })
+                }
+                HashProgress::Bytes(bytes) => self.emit(activity::Event::ChecksumBytes(bytes)),
+                HashProgress::End(result) => self.emit(activity::Event::ChecksumEnd(result)),
+            }) {
                 Ok(verified) => {
                     checksum = Evidence::Known(verified.digest.clone());
                     verified_hash = Some(verified);
@@ -476,6 +520,7 @@ impl Scanner {
             }
         }
         let observed_at = now();
+        self.count(|counts| counts.completed += 1);
         Ok((
             LocalObservation {
                 sync_root_id: self.sync_root_id.clone(),
@@ -558,11 +603,19 @@ fn stamp(meta: &std::fs::Metadata) -> FileStamp {
         meta.ctime_nsec(),
     )
 }
+enum HashProgress {
+    Reused,
+    Start(u64),
+    Bytes(u64),
+    End(Result<(), ScanError>),
+}
+
 fn hash(
     path: &StdPath,
     expected: &std::fs::Metadata,
     previous: Option<&CachedHash>,
     cancel: &CancellationToken,
+    progress: impl Fn(HashProgress),
 ) -> Result<CachedHash, ScanError> {
     let mut file = OpenOptions::new()
         .read(true)
@@ -583,12 +636,25 @@ fn hash(
     }) {
         Some(cached) => {
             let _sample = crate::performance::Sample::begin("local_sha256_reuse");
+            progress(HashProgress::Reused);
             cached.clone()
         }
         None => CachedHash {
             stamp: fingerprint,
             birth_ns,
-            digest: digest(&mut file, cancel)?,
+            digest: if before.len() >= 1024 * 1024 {
+                let total = before.len();
+                progress(HashProgress::Start(total));
+                let result = digest(&mut file, cancel, |bytes| {
+                    progress(HashProgress::Bytes(bytes))
+                });
+                progress(HashProgress::End(
+                    result.as_ref().map(|_| ()).map_err(|error| *error),
+                ));
+                result?
+            } else {
+                digest(&mut file, cancel, |_| {})?
+            },
             checked: Instant::now(),
         },
     };
@@ -622,10 +688,15 @@ fn cacheable(file: &File) -> bool {
     )
 }
 
-fn digest(file: &mut File, cancel: &CancellationToken) -> Result<Checksum, ScanError> {
+fn digest(
+    file: &mut File,
+    cancel: &CancellationToken,
+    progress: impl Fn(u64),
+) -> Result<Checksum, ScanError> {
     let _sample = crate::performance::Sample::begin("local_sha256");
     let mut hash = Sha256::new();
     let mut buffer = [0; 65536];
+    let mut bytes = 0;
     loop {
         if cancel.is_cancelled() {
             return Err(ScanError::Cancelled);
@@ -635,6 +706,8 @@ fn digest(file: &mut File, cancel: &CancellationToken) -> Result<Checksum, ScanE
             break;
         }
         hash.update(&buffer[..count]);
+        bytes += count as u64;
+        progress(bytes);
     }
     Ok(Checksum {
         algorithm: "sha256".into(),

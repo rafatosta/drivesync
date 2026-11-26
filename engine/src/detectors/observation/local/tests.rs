@@ -13,16 +13,16 @@ fn initial_snapshot_and_continuous_edits_removals_and_renames_are_facts_only() {
     let mut observer =
         LocalObserver::new(Scanner::open(s.0.clone(), SyncRootId("scope".into())).unwrap());
     let token = CancellationToken::new();
-    let (first, _) = observer.poll(&token).unwrap();
+    let (first, _) = observer.poll(&token, None).unwrap();
     assert_eq!(kind(&first[0]), ObservationKind::Snapshot);
-    assert!(observer.poll(&token).unwrap().0.is_empty());
+    assert!(observer.poll(&token, None).unwrap().0.is_empty());
     std::fs::write(s.0.join("file"), b"changed").unwrap();
     assert_eq!(
-        kind(&observer.poll(&token).unwrap().0[0]),
+        kind(&observer.poll(&token, None).unwrap().0[0]),
         ObservationKind::Modified
     );
     std::fs::rename(s.0.join("file"), s.0.join("renamed")).unwrap();
-    let (changes, coverage) = observer.poll(&token).unwrap();
+    let (changes, coverage) = observer.poll(&token, None).unwrap();
     assert_eq!(coverage, ObservationCoverage::Complete);
     assert_eq!(changes.len(), 2);
     assert!(changes.iter().any(|o| kind(o) == ObservationKind::Removed));
@@ -35,12 +35,12 @@ fn failed_round_keeps_previous_snapshot_and_recovery_republishes_evidence() {
     let mut observer =
         LocalObserver::new(Scanner::open(s.0.clone(), SyncRootId("scope".into())).unwrap());
     let token = CancellationToken::new();
-    observer.poll(&token).unwrap();
+    observer.poll(&token, None).unwrap();
     let cancelled = CancellationToken::new();
     cancelled.cancel();
-    assert!(observer.poll(&cancelled).is_err());
+    assert!(observer.poll(&cancelled, None).is_err());
     assert_eq!(observer.unavailable().len(), 1);
-    let (again, _) = observer.poll(&token).unwrap();
+    let (again, _) = observer.poll(&token, None).unwrap();
     assert_eq!(kind(&again[0]), ObservationKind::RecheckRequired);
 }
 #[test]
@@ -50,13 +50,13 @@ fn absence_is_emitted_only_after_a_complete_recovery_round() {
     let mut observer =
         LocalObserver::new(Scanner::open(s.0.clone(), SyncRootId("scope".into())).unwrap());
     let token = CancellationToken::new();
-    observer.poll(&token).unwrap();
+    observer.poll(&token, None).unwrap();
     let failed = CancellationToken::new();
     failed.cancel();
-    assert!(observer.poll(&failed).is_err());
+    assert!(observer.poll(&failed, None).is_err());
     std::fs::remove_file(s.0.join("file")).unwrap();
     assert!(observer.unavailable().iter().all(|observation|matches!(observation,Observation::Local {data,..} if data.state==FileState::Unavailable)));
-    let (recovered, coverage) = observer.poll(&token).unwrap();
+    let (recovered, coverage) = observer.poll(&token, None).unwrap();
     assert_eq!(coverage, ObservationCoverage::Complete);
     assert_eq!(recovered.len(), 1);
     assert_eq!(kind(&recovered[0]), ObservationKind::Removed);

@@ -27,6 +27,9 @@ pub(crate) enum Phase {
     Initialize,
     Prepare,
     Observe,
+    Traverse,
+    Recover,
+    Checksum,
     Deliver,
     Idle,
 }
@@ -54,6 +57,12 @@ pub(crate) enum State {
 pub(crate) enum Unit {
     Files,
     Observations,
+    EntriesVisited,
+    EntriesCompleted,
+    Directories,
+    SnapshotItems,
+    ChecksumsReused,
+    Bytes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,17 +82,25 @@ impl Progress {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reason {
+    CoverageLost,
+    NamespaceChanged,
+    NoCurrentWatch,
+}
+
 /// Latest known details. Paths are root-relative display positions, with no provider identifiers.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Details {
+    pub(crate) reason: Option<Reason>,
     pub(crate) item: Option<Path>,
-    pub(crate) progress: [Option<Progress>; 4],
+    pub(crate) progress: [Option<Progress>; 5],
 }
 
 impl Details {
     pub(crate) fn count(progress: Progress) -> Self {
         Self {
-            progress: [Some(progress), None, None, None],
+            progress: [Some(progress), None, None, None, None],
             ..Self::default()
         }
     }
@@ -387,18 +404,31 @@ impl ActivityPublisher {
         }
     }
 
-    fn update(&self, id: ActivityId, sample: Sample<(State, Details)>) {
-        let mut latest = self.channel.latest.lock().unwrap();
-        let Some(active) = latest.active.get_mut(&id) else {
-            return;
+    fn update(&self, id: ActivityId, sample: Sample<Reported>) {
+        let scan_changed = {
+            let mut latest = self.channel.latest.lock().unwrap();
+            let Some(active) = latest.active.get_mut(&id) else {
+                return;
+            };
+            let activity = &mut active.activity;
+            if sample.sequence <= activity.sequence {
+                return;
+            }
+            activity.sequence = sample.sequence;
+            activity.updated = sample.at;
+            activity.state = sample.value.state;
+            activity.details = sample.value.details;
+            sample.value.scan.is_some_and(|scan| {
+                apply_scan(
+                    self.source,
+                    &mut latest.sources[self.source.index()],
+                    ScanUpdate::Progress(scan),
+                )
+            })
         };
-        let activity = &mut active.activity;
-        if sample.sequence <= activity.sequence {
-            return;
+        if scan_changed {
+            self.channel.changed.notify_one();
         }
-        activity.sequence = sample.sequence;
-        activity.updated = sample.at;
-        (activity.state, activity.details) = sample.value;
     }
 
     fn finish(&self, id: ActivityId, _state: State) {
@@ -406,12 +436,18 @@ impl ActivityPublisher {
     }
 }
 
+struct Reported {
+    state: State,
+    details: Details,
+    scan: Option<ScanProgress>,
+}
+
 /// An activity cannot stay active when its future or blocking scope is dropped.
 pub(crate) struct ActivityGuard {
     publisher: ActivityPublisher,
     origin: Origin,
     id: Option<ActivityId>,
-    reporter: Option<ActivityReporter<(State, Details)>>,
+    reporter: Option<ActivityReporter<Reported>>,
 }
 
 impl ActivityGuard {
@@ -431,13 +467,38 @@ impl ActivityGuard {
 
     pub(crate) fn report(&self, details: impl FnOnce() -> Details) {
         if let Some(reporter) = &self.reporter {
-            reporter.report(|| (State::Running, details()));
+            reporter.report(|| Reported {
+                state: State::Running,
+                details: details(),
+                scan: None,
+            });
+        }
+    }
+
+    pub(crate) fn report_scan(
+        &self,
+        immediate: bool,
+        details: impl FnOnce() -> (Details, ScanProgress),
+    ) {
+        if let Some(reporter) = &self.reporter {
+            reporter.publish(immediate, || {
+                let (details, scan) = details();
+                Reported {
+                    state: State::Running,
+                    details,
+                    scan: Some(scan),
+                }
+            });
         }
     }
 
     pub(crate) fn transition(&self, state: State, details: impl FnOnce() -> Details) {
         if let Some(reporter) = &self.reporter {
-            reporter.publish(true, || (state, details()));
+            reporter.publish(true, || Reported {
+                state,
+                details: details(),
+                scan: None,
+            });
         }
     }
 
