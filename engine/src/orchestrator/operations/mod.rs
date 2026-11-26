@@ -277,9 +277,7 @@ impl PersistingOperator {
         r: &ExecuteOperationRequest,
         stored: &InventorySnapshot,
     ) -> Result<(), OperatorError> {
-        use crate::detectors::observation::{
-            remote::interfaces::CancellationToken, scanner::Scanner, ObservationCoverage,
-        };
+        use crate::detectors::{verify_local_scope, LocalVerification};
         use std::os::unix::fs::MetadataExt;
         if (!matches!(
             r.operation.action,
@@ -309,32 +307,16 @@ impl PersistingOperator {
             return Err(filesystem::stale());
         }
         self.filesystem.check(&r.local)?;
-        let mut scanner = Scanner::open(
+        let entries = verify_local_scope(
             self.config.local_root.clone(),
             self.config.sync_root_id.clone(),
+            LocalVerification::ExpandLimit,
         )
         .map_err(|_| filesystem::stale())?;
-        let scan = loop {
-            let scan = scanner
-                .scan(&CancellationToken::new())
-                .map_err(|_| filesystem::stale())?;
-            if scan.coverage == ObservationCoverage::Complete {
-                break scan;
-            }
-            if !scan.issues.iter().any(|i| {
-                i.kind == crate::detectors::observation::scanner::ScanIssueKind::LimitReached
-            }) || !scanner.expand_limit()
-            {
-                return Err(filesystem::stale());
-            }
-        };
-        if scan.coverage != ObservationCoverage::Complete
-            || scan
-                .entries
-                .values()
-                .any(|e| e.identity == stored.identity.local_identity)
-            || scan
-                .entries
+        if entries
+            .values()
+            .any(|e| e.identity == stored.identity.local_identity)
+            || entries
                 .values()
                 .filter(|e| e.identity == r.local.identity)
                 .count()
@@ -350,9 +332,7 @@ impl PersistingOperator {
         r: &ExecuteOperationRequest,
         stored: &InventorySnapshot,
     ) -> Result<(), OperatorError> {
-        use crate::detectors::observation::{
-            remote::interfaces::CancellationToken, scanner::Scanner, ObservationCoverage,
-        };
+        use crate::detectors::{verify_local_scope, LocalVerification};
         use std::os::unix::fs::MetadataExt;
         if !matches!(&r.local.identity, Evidence::Known(i) if i.birth_ns.is_some())
             || r.local.identity != stored.identity.local_identity
@@ -372,27 +352,13 @@ impl PersistingOperator {
         {
             return Err(filesystem::stale());
         }
-        let mut scanner = Scanner::open(
+        let entries = verify_local_scope(
             self.config.local_root.clone(),
             self.config.sync_root_id.clone(),
+            LocalVerification::ExpandLimit,
         )
         .map_err(|_| filesystem::stale())?;
-        let scan = loop {
-            let scan = scanner
-                .scan(&CancellationToken::new())
-                .map_err(|_| filesystem::stale())?;
-            if scan.coverage == ObservationCoverage::Complete {
-                break scan;
-            }
-            if !scan.issues.iter().any(|i| {
-                i.kind == crate::detectors::observation::scanner::ScanIssueKind::LimitReached
-            }) || !scanner.expand_limit()
-            {
-                return Err(filesystem::stale());
-            }
-        };
-        if scan
-            .entries
+        if entries
             .values()
             .filter(|e| e.identity == r.local.identity)
             .count()
@@ -400,7 +366,7 @@ impl PersistingOperator {
             || stored
                 .local_path
                 .as_ref()
-                .is_some_and(|old| scan.entries.contains_key(old))
+                .is_some_and(|old| entries.contains_key(old))
         {
             return Err(filesystem::stale());
         }
@@ -607,7 +573,7 @@ impl PersistingOperator {
 impl Operator for PersistingOperator {
     fn record_conflict<'a>(
         &'a self,
-        file: &'a crate::detectors::context::File,
+        file: &'a crate::detectors::File,
         reason: String,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), OperatorError>> + Send + 'a>>
     {

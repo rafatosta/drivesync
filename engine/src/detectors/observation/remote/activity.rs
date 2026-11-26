@@ -1,8 +1,9 @@
 //! Provider-neutral activity contract for scoped remote observation.
 
-use super::super::ScanProgress;
 use crate::{
-    detectors::activity::{ActivityGuard, Details, Phase, Progress, Reason, State, Unit, Wait},
+    detectors::activity::{
+        ActivityGuard, Details, Phase, Progress, Reason, ScanProgress, State, Unit, Wait,
+    },
     models::Path,
 };
 use std::future::Future;

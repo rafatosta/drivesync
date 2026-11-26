@@ -7,7 +7,7 @@ mod trash;
 pub(crate) use conflicts::attributes as conflict_attributes;
 
 use crate::{
-    detectors::context::File,
+    detectors::File,
     inventory::models::{BaselineState, OperationAction},
     models::{Evidence, FileState, ItemId},
 };
@@ -402,8 +402,7 @@ fn validate(file: &File) -> Validation {
     }
 
     if file.local.state == FileState::Absent
-        && file.observations.local_coverage
-            != crate::detectors::observation::ObservationCoverage::Complete
+        && file.observations.local_coverage != crate::detectors::ObservationCoverage::Complete
     {
         push_check(
             &mut checks,
@@ -413,8 +412,7 @@ fn validate(file: &File) -> Validation {
         );
     }
     if file.remote.state == FileState::Absent
-        && file.observations.remote_coverage
-            != crate::detectors::observation::ObservationCoverage::Complete
+        && file.observations.remote_coverage != crate::detectors::ObservationCoverage::Complete
     {
         push_check(
             &mut checks,
@@ -522,7 +520,7 @@ fn compare(file: &File) -> Changeset {
                 "Workspace content is represented by remote version, not a binary digest.".into(),
             )
         } else if file.observations.remote_coverage
-            == crate::detectors::observation::ObservationCoverage::Complete
+            == crate::detectors::ObservationCoverage::Complete
             && file.remote.state == FileState::Present
             && baseline_remote.state == FileState::Present
             && file.remote.trashed == Evidence::Known(false)
@@ -1033,10 +1031,9 @@ fn initial_local_plan(
 }
 
 fn complete(file: &File) -> bool {
-    use crate::detectors::observation::ObservationCoverage;
+    use crate::detectors::ObservationCoverage;
     file.observations.local_coverage == ObservationCoverage::Complete
-        && file.observations.remote_coverage
-            == crate::detectors::observation::ObservationCoverage::Complete
+        && file.observations.remote_coverage == crate::detectors::ObservationCoverage::Complete
         && file.environment.local_root_available
         && file.environment.remote_available
 }

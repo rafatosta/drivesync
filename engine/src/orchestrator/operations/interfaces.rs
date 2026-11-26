@@ -13,7 +13,7 @@ pub(crate) type RecoveryObserver<'a> =
 pub(crate) trait Operator: Send + Sync {
     fn record_conflict<'a>(
         &'a self,
-        _file: &'a crate::detectors::context::File,
+        _file: &'a crate::detectors::File,
         _reason: String,
     ) -> Pin<Box<dyn Future<Output = Result<(), OperatorError>> + Send + 'a>> {
         Box::pin(async { Err(OperatorError::new(OperatorErrorKind::UnsupportedOperation)) })

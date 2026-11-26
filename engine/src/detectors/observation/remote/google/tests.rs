@@ -853,7 +853,7 @@ async fn paginated_progress_reports_scoped_folder_names_without_publishing_parti
         .unwrap();
     assert_eq!(result.coverage, ObservationCoverage::Complete);
     let mut work = SynchronizationWork::default();
-    channel.take_scan_changes().project(&mut work);
+    channel.inbox().project(&mut work);
     let scan = work.remote.unwrap();
     assert_eq!(scan.path.as_deref(), Some(std::path::Path::new("Teaching")));
     assert_eq!((scan.items, scan.pages), (1, 2));

@@ -1,10 +1,7 @@
 //! Connection-owned lifecycle and producer ingress; sessions never cross the public boundary.
 use super::*;
 use crate::{
-    detectors::{
-        context::{ContextConfig, PathRoot},
-        Detectors,
-    },
+    detectors::{ContextConfig, Detectors, PathRoot},
     models::SyncRootId,
     orchestrator::{self, OrchestratorConfig, OrchestratorHandle},
     synchronization::*,
@@ -312,6 +309,7 @@ impl Engine {
                             client,
                             ownership,
                             writer.clone(),
+                            detectors.activity_inbox(),
                         )
                         .map_err(error)?;
                         Ok::<_, EngineError>(Session {
@@ -375,7 +373,7 @@ impl Engine {
         &self,
         account_id: AccountId,
     ) -> EngineResult<SynchronizationAudit> {
-        let (detectors, activity, epoch, identity) = {
+        let (detectors, epoch, identity) = {
             let sessions = self.inner.synchronizations.lock().await;
             let session = sessions
                 .get(&account_id)
@@ -383,7 +381,6 @@ impl Engine {
                 .ok_or_else(|| error(SynchronizationErrorKind::NotStarted))?;
             (
                 session.detectors.clone(),
-                session.orchestrator.shared_detector_activity(),
                 session.orchestrator.collection_epoch(),
                 session
                     .orchestrator
@@ -394,7 +391,7 @@ impl Engine {
             )
         };
         self.runtime()
-            .spawn_blocking(move || detectors.audit(&activity, epoch, &identity))
+            .spawn_blocking(move || detectors.audit(epoch, &identity))
             .await
             .map_err(|_| EngineError::new(EngineErrorKind::Internal))?
             .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))
@@ -499,22 +496,13 @@ impl Engine {
                         .ok_or_else(|| error(SynchronizationErrorKind::NotStarted))?;
                     (session.detectors.clone(), session.orchestrator.clone())
                 };
-                use crate::detectors::activity::{Details, Origin, Phase, State};
-                let activity = orchestrator.shared_detector_activity().begin(
-                    Origin::Shared,
-                    None,
-                    Phase::Observe,
-                    State::Running,
-                    Details::default(),
-                );
                 let files = detectors
-                    .contextualize_batch(observation, &activity)
+                    .contextualize_batch(observation, None)
                     .await
                     .map_err(|_| error(SynchronizationErrorKind::InvalidObservation))?;
                 for file in files {
                     orchestrator.submit(file).await.map_err(error)?;
                 }
-                activity.finish(State::Complete);
                 Ok(())
             })
             .await
@@ -522,7 +510,7 @@ impl Engine {
     }
 }
 
-use crate::detectors::observation::Observation;
+use crate::detectors::Observation;
 
 fn recent_activity(
     operation: &crate::inventory::models::PendingOperation,

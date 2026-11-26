@@ -155,7 +155,7 @@ pub(crate) struct Activity {
     pub(crate) updated: Instant,
 }
 
-use super::observation::progress::{ActivityReporter, Sample, ScanProgress};
+use super::progress::{ActivityReporter, Sample};
 use crate::synchronization::{SynchronizationScan, SynchronizationScanState, SynchronizationWork};
 use std::{
     collections::BTreeMap,
@@ -186,9 +186,23 @@ impl Source {
     }
 }
 
-pub(crate) enum ScanUpdate {
+pub(super) struct ScanProgress {
+    pub(super) path: Option<Path>,
+    pub(super) items: u64,
+    pub(super) pages: u64,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ScanState {
+    Reading,
+    RetryScheduled,
+    Complete,
+    Failed,
+}
+
+pub(super) enum ScanUpdate {
     Progress(ScanProgress),
-    State(SynchronizationScanState, Option<u64>),
+    State(ScanState, Option<u64>),
 }
 
 const MAX_ACTIVE: usize = 128;
@@ -223,14 +237,14 @@ impl Latest {
 
 /// Per-Orchestrator latest-state mailbox. Producers never take the public watch lock.
 /// The supervisor only holds this lock while taking changed slots; no callbacks run under it.
-pub(crate) struct ActivityChannel {
-    pub(crate) scope: Scope,
+pub(super) struct ActivityChannel {
+    scope: Scope,
     latest: Mutex<Latest>,
     changed: Notify,
 }
 
 impl ActivityChannel {
-    pub(crate) fn new(scope: Scope) -> Arc<Self> {
+    pub(super) fn new(scope: Scope) -> Arc<Self> {
         Arc::new(Self {
             scope,
             latest: Mutex::default(),
@@ -238,14 +252,24 @@ impl ActivityChannel {
         })
     }
 
-    pub(crate) fn open(self: &Arc<Self>, source: Source) -> ActivitySession {
-        let mut latest = self.latest.lock().unwrap();
-        let generation = latest.next_id();
-        if !latest.closed {
-            latest
-                .active
-                .retain(|_, active| active.source != Some(source));
-            latest.sources[source.index()].generation = Some(generation);
+    pub(super) fn open(self: &Arc<Self>, source: Source) -> ActivitySession {
+        let (generation, cleared) = {
+            let mut latest = self.latest.lock().unwrap();
+            let generation = latest.next_id();
+            let mut cleared = false;
+            if !latest.closed {
+                latest
+                    .active
+                    .retain(|_, active| active.source != Some(source));
+                let slot = &mut latest.sources[source.index()];
+                slot.generation = Some(generation);
+                cleared = slot.scan.take().is_some();
+                slot.dirty |= cleared;
+            }
+            (generation, cleared)
+        };
+        if cleared {
+            self.changed.notify_one();
         }
         ActivitySession(ActivityPublisher {
             channel: self.clone(),
@@ -254,7 +278,7 @@ impl ActivityChannel {
         })
     }
 
-    pub(crate) fn shared(self: &Arc<Self>) -> ActivityPublisher {
+    pub(super) fn shared(self: &Arc<Self>) -> ActivityPublisher {
         ActivityPublisher {
             channel: self.clone(),
             source: None,
@@ -262,19 +286,23 @@ impl ActivityChannel {
         }
     }
 
-    pub(crate) fn close(&self) {
+    pub(super) fn inbox(self: &Arc<Self>) -> ActivityInbox {
+        ActivityInbox(self.clone())
+    }
+
+    fn close(&self) {
         let mut latest = self.latest.lock().unwrap();
         latest.closed = true;
         latest.active.clear();
         latest.sources = Default::default();
     }
 
-    pub(crate) async fn changed(&self) {
+    async fn changed(&self) {
         self.changed.notified().await;
     }
 
     /// Take slot changes before touching the public status, preserving unrelated work fields.
-    pub(crate) fn take_scan_changes(&self) -> ScanChanges {
+    fn take_scan_changes(&self) -> ScanChanges {
         let mut latest = self.latest.lock().unwrap();
         ScanChanges(
             latest
@@ -299,6 +327,46 @@ impl ActivityChannel {
         if changed {
             self.changed.notify_one();
         }
+    }
+}
+
+/// Read side of the contract. The Orchestrator never opens a source session or publishes activity.
+#[derive(Clone)]
+pub(crate) struct ActivityInbox(Arc<ActivityChannel>);
+
+impl ActivityInbox {
+    pub(crate) fn scope(&self) -> &Scope {
+        &self.0.scope
+    }
+
+    pub(crate) fn close(&self) {
+        self.0.close();
+    }
+
+    pub(crate) async fn changed(&self) {
+        self.0.changed().await;
+    }
+
+    pub(crate) fn project(&self, work: &mut SynchronizationWork) -> bool {
+        self.0.take_scan_changes().project(work)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_scope(scope: Scope) -> Self {
+        ActivityChannel::new(scope).inbox()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_scan(&self, items: u64, pages: u64) {
+        let session = self.0.open(Source::Remote);
+        session.publisher().scan(ScanUpdate::Progress(ScanProgress {
+            path: Some("Documents/Teaching".into()),
+            items,
+            pages,
+        }));
+        session
+            .publisher()
+            .scan(ScanUpdate::State(ScanState::RetryScheduled, None));
     }
 }
 
@@ -329,6 +397,12 @@ fn apply_scan(source: Source, slot: &mut Slot, update: ScanUpdate) -> bool {
             retry_at: None,
         },
         ScanUpdate::State(state, items) => {
+            let state = match state {
+                ScanState::Reading => Reading,
+                ScanState::RetryScheduled => RetryScheduled,
+                ScanState::Complete => SynchronizationScanState::Complete,
+                ScanState::Failed => SynchronizationScanState::Failed,
+            };
             let mut next = slot.scan.clone().unwrap_or(SynchronizationScan {
                 state,
                 path: None,
@@ -394,7 +468,7 @@ pub(crate) struct ActivityPublisher {
 }
 
 impl ActivityPublisher {
-    pub(crate) fn scan(&self, update: ScanUpdate) {
+    pub(super) fn scan(&self, update: ScanUpdate) {
         if let Some(source) = self.source {
             self.channel.scan(source, self.generation, update);
         }
@@ -415,12 +489,18 @@ impl ActivityPublisher {
                     latest.sources[source.index()].generation != Some(self.generation)
                 })
                 || latest.active.len() >= MAX_ACTIVE
+                || parent.is_some_and(|parent| {
+                    !latest
+                        .active
+                        .get(&parent)
+                        .is_some_and(|active| active.generation == self.generation)
+                })
             {
                 return ActivityGuard {
                     publisher: self.clone(),
                     origin,
                     id: None,
-                    reporter: None,
+                    reporter: ActivityReporter::default(),
                 };
             }
             let id = latest.next_id();
@@ -445,14 +525,11 @@ impl ActivityPublisher {
             );
             id
         };
-        let publisher = self.clone();
         ActivityGuard {
             publisher: self.clone(),
             origin,
             id: Some(id),
-            reporter: Some(ActivityReporter::new(move |sample| {
-                publisher.update(id, sample)
-            })),
+            reporter: ActivityReporter::default(),
         }
     }
 
@@ -503,7 +580,7 @@ pub(crate) struct ActivityGuard {
     publisher: ActivityPublisher,
     origin: Origin,
     id: Option<ActivityId>,
-    reporter: Option<ActivityReporter<Reported>>,
+    reporter: ActivityReporter,
 }
 
 impl ActivityGuard {
@@ -518,53 +595,61 @@ impl ActivityGuard {
         state: State,
         details: Details,
     ) -> Self {
+        if self.id.is_none() {
+            return Self {
+                publisher: self.publisher.clone(),
+                origin,
+                id: None,
+                reporter: ActivityReporter::default(),
+            };
+        }
         self.publisher.begin(origin, self.id, phase, state, details)
     }
 
     pub(crate) fn report(&self, details: impl FnOnce() -> Details) {
-        if let Some(reporter) = &self.reporter {
-            reporter.report(|| Reported {
-                state: State::Running,
-                details: Some(details()),
-                scan: None,
-            });
-        }
+        self.publish(false, || Reported {
+            state: State::Running,
+            details: Some(details()),
+            scan: None,
+        });
     }
 
-    pub(crate) fn report_scan(
+    pub(super) fn report_scan(
         &self,
         immediate: bool,
         details: impl FnOnce() -> (Details, ScanProgress),
     ) {
-        if let Some(reporter) = &self.reporter {
-            reporter.publish(immediate, || {
-                let (details, scan) = details();
-                Reported {
-                    state: State::Running,
-                    details: Some(details),
-                    scan: Some(scan),
-                }
-            });
-        }
+        self.publish(immediate, || {
+            let (details, scan) = details();
+            Reported {
+                state: State::Running,
+                details: Some(details),
+                scan: Some(scan),
+            }
+        });
     }
 
     pub(crate) fn set_state(&self, state: State) {
-        if let Some(reporter) = &self.reporter {
-            reporter.publish(true, || Reported {
-                state,
-                details: None,
-                scan: None,
-            });
-        }
+        self.publish(true, || Reported {
+            state,
+            details: None,
+            scan: None,
+        });
     }
 
     pub(crate) fn transition(&self, state: State, details: impl FnOnce() -> Details) {
-        if let Some(reporter) = &self.reporter {
-            reporter.publish(true, || Reported {
-                state,
-                details: Some(details()),
-                scan: None,
-            });
+        self.publish(true, || Reported {
+            state,
+            details: Some(details()),
+            scan: None,
+        });
+    }
+
+    fn publish(&self, immediate: bool, update: impl FnOnce() -> Reported) {
+        if let Some(id) = self.id {
+            if let Some(sample) = self.reporter.sample(immediate, update) {
+                self.publisher.update(id, sample);
+            }
         }
     }
 

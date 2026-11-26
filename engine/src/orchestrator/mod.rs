@@ -7,11 +7,7 @@ mod refresh;
 pub(crate) use crate::detectors::activity::Source;
 use crate::{
     accounts::Accounts,
-    detectors::{
-        activity::{ActivityChannel, ActivityPublisher, ActivitySession, Scope as DetectorScope},
-        context::File,
-        observation::ObservationCoverage,
-    },
+    detectors::{activity::ActivityInbox, File, ObservationCoverage},
     inventory::{models::WriteStatus, Inventory, InventoryConfig},
     models::{DateTime, Evidence, Id},
     providers::google::GoogleDriveClient,
@@ -44,7 +40,7 @@ pub(crate) struct OrchestratorHandle {
     stop: watch::Sender<bool>,
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
-    detector_activities: Arc<ActivityChannel>,
+    detector_activities: ActivityInbox,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
@@ -88,12 +84,6 @@ impl OrchestratorHandle {
         SynchronizationSubscription {
             receiver: self.status.clone(),
         }
-    }
-    pub(crate) fn detector_session(&self, source: Source) -> ActivitySession {
-        self.detector_activities.open(source)
-    }
-    pub(crate) fn shared_detector_activity(&self) -> ActivityPublisher {
-        self.detector_activities.shared()
     }
     /// Backpressure keeps observations bounded; a stopped worker rejects new work.
     pub(crate) async fn submit(&self, file: File) -> Result<(), SynchronizationErrorKind> {
@@ -147,7 +137,12 @@ pub(crate) fn open(
     client: GoogleDriveClient,
     ownership: Arc<RwLock<()>>,
     writer: Arc<dyn Send + Sync>,
+    detector_activities: ActivityInbox,
 ) -> Result<OrchestratorHandle, SynchronizationErrorKind> {
+    let scope = detector_activities.scope();
+    if scope.account != config.roots.account_id || scope.root != config.sync_root_id {
+        return Err(SynchronizationErrorKind::InvalidConfiguration);
+    }
     let inventory = Arc::new(
         Inventory::open(InventoryConfig {
             directory,
@@ -177,6 +172,7 @@ pub(crate) fn open(
         ownership,
         QUEUE_CAPACITY,
         Some(writer),
+        detector_activities,
     ))
 }
 #[cfg(test)]
@@ -186,7 +182,11 @@ fn start(
     ownership: Arc<RwLock<()>>,
     capacity: usize,
 ) -> OrchestratorHandle {
-    start_guarded(config, operator, ownership, capacity, None)
+    let inbox = ActivityInbox::test_scope(crate::detectors::activity::Scope {
+        account: config.roots.account_id.clone(),
+        root: config.sync_root_id.clone(),
+    });
+    start_guarded(config, operator, ownership, capacity, None, inbox)
 }
 fn start_guarded(
     config: OrchestratorConfig,
@@ -194,6 +194,7 @@ fn start_guarded(
     ownership: Arc<RwLock<()>>,
     capacity: usize,
     writer: Option<Arc<dyn Send + Sync>>,
+    detector_activities: ActivityInbox,
 ) -> OrchestratorHandle {
     let mut initial = SynchronizationStatus::new(
         config.roots.account_id.clone(),
@@ -230,10 +231,6 @@ fn start_guarded(
     let task = tokio::spawn(async move {
         worker.run(files_rx, ownership).await;
     });
-    let detector_activities = ActivityChannel::new(DetectorScope {
-        account: config.roots.account_id.clone(),
-        root: config.sync_root_id.clone(),
-    });
     let activity_inbox = detector_activities.clone();
     tokio::spawn(async move {
         let mut task = task;
@@ -242,11 +239,10 @@ fn start_guarded(
                 biased;
                 result = &mut task => break result,
                 _ = activity_inbox.changed() => {
-                    let scans = activity_inbox.take_scan_changes();
                     status.send_if_modified(|status| {
                         !matches!(status.state, SynchronizationState::Stopped | SynchronizationState::Failed)
-                            && status.account_id == activity_inbox.scope.account
-                            && scans.project(&mut status.work)
+                            && status.account_id == activity_inbox.scope().account
+                            && activity_inbox.project(&mut status.work)
                     });
                 }
             }

@@ -10,13 +10,9 @@ use super::{
 };
 use crate::{
     detectors::{
-        context::{Context, ContextConfig, PathRoot},
-        observation::{
-            models::{CaptureEntries, ScopeCapture},
-            remote::interfaces::CancellationToken,
-            scanner::Scanner,
-            *,
-        },
+        CaptureEntries, ContextConfig, Observation, ObservationCoverage, PathRoot,
+        RemoteObservation, ScopeCapture, TestCancellation as CancellationToken,
+        TestContext as Context, TestScanner as Scanner,
     },
     inventory::models::*,
     orchestrator::{Orchestrator, OrchestratorConfig},

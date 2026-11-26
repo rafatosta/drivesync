@@ -1,14 +1,13 @@
 //! Translation from Scanner diagnostics to the local observation lifecycle.
 
-use super::super::{
-    scanner::{
-        activity::{Event, Rebuild, Reporter, Traversal},
-        ScanError,
-    },
-    ScanProgress,
+use super::super::scanner::{
+    activity::{Event, Rebuild, Reporter, Traversal},
+    ScanError,
 };
 use crate::{
-    detectors::activity::{ActivityGuard, Details, Phase, Progress, Reason, State, Unit},
+    detectors::activity::{
+        ActivityGuard, Details, Phase, Progress, Reason, ScanProgress, State, Unit,
+    },
     models::Path,
 };
 use std::cell::RefCell;

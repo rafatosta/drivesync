@@ -267,21 +267,16 @@ impl Filesystem {
         expected: &LocalState,
         scope: &SyncRootId,
     ) -> Result<(), OperatorError> {
-        use crate::detectors::observation::{
-            remote::interfaces::CancellationToken, scanner::Scanner, ObservationCoverage,
-        };
+        use crate::detectors::{verify_local_scope, LocalVerification};
         self.validate_root()?;
         self.check_absent(expected.path.as_ref().ok_or_else(stale)?)?;
-        let scanner = Scanner::open(self.absolute.clone(), scope.clone()).map_err(|_| stale())?;
-        let scan = scanner
-            .scan(&CancellationToken::new())
-            .map_err(|_| stale())?;
-        if scan.coverage != ObservationCoverage::Complete
-            || scan
-                .entries
-                .values()
-                .any(|e| e.identity == expected.identity)
-        {
+        let entries = verify_local_scope(
+            self.absolute.clone(),
+            scope.clone(),
+            LocalVerification::Once,
+        )
+        .map_err(|_| stale())?;
+        if entries.values().any(|e| e.identity == expected.identity) {
             return Err(stale());
         }
         self.verify_trashed_source(expected)

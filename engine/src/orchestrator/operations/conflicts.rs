@@ -1,6 +1,6 @@
 //! Durable conflict facts and dispatch authorization. Choices never bypass ordinary preconditions.
 use super::*;
-use crate::{conflicts, detectors::context::File};
+use crate::{conflicts, detectors::File};
 impl PersistingOperator {
     pub(super) fn record_conflict(&self, file: &File, reason: String) -> Result<(), OperatorError> {
         if file.identity.account_id != self.config.account_id
@@ -8,7 +8,7 @@ impl PersistingOperator {
         {
             return Err(filesystem::invalid());
         }
-        use crate::detectors::observation::ObservationCoverage;
+        use crate::detectors::ObservationCoverage;
         if file.observations.local_coverage != ObservationCoverage::Complete
             || file.observations.remote_coverage != ObservationCoverage::Complete
             || !file.environment.local_root_available
@@ -241,7 +241,7 @@ mod initial_tests {
         file.local = r.local.clone();
         file.local.state = FileState::Unknown;
         file.remote = r.remote.clone();
-        file.association_candidates = vec![crate::detectors::context::AssociationCandidate {
+        file.association_candidates = vec![crate::detectors::AssociationCandidate {
             local: r.local.clone(),
             remote: r.remote.clone(),
             parents_correspond: Evidence::Known(true),

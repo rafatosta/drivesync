@@ -944,14 +944,7 @@ async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage()
     let operation = handle.status().current_operation.unwrap().id;
     let mut subscription = handle.subscribe();
     subscription.current();
-    use crate::detectors::{activity::ScanUpdate, observation::ScanProgress};
-    let session = handle.detector_session(Source::Remote);
-    let remote = session.publisher();
-    remote.scan(ScanUpdate::Progress(ScanProgress {
-        path: Some("Documents/Teaching".into()),
-        items: 340,
-        pages: 4,
-    }));
+    handle.detector_activities.test_scan(340, 4);
     let status = subscription.changed().await.unwrap();
     assert_eq!(status.account_id, config().roots.account_id);
     assert_eq!(status.current_operation.unwrap().id, operation);
@@ -961,27 +954,11 @@ async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage()
         Some(std::path::Path::new("Documents/Teaching"))
     );
     assert!(status.verification.is_none());
-    remote.scan(ScanUpdate::State(
-        SynchronizationScanState::RetryScheduled,
-        None,
-    ));
-    assert!(subscription
-        .changed()
-        .await
-        .unwrap()
-        .work
-        .remote
-        .unwrap()
-        .retry_at
-        .is_some());
+    assert!(status.work.remote.unwrap().retry_at.is_some());
     pause.release.notify_one();
     let stopped = handle.stop().await;
     assert_eq!(stopped.work, SynchronizationWork::default());
     assert!(stopped.pending.is_none());
-    remote.scan(ScanUpdate::Progress(ScanProgress {
-        path: Some("late".into()),
-        items: 1,
-        pages: 0,
-    }));
+    handle.detector_activities.test_scan(1, 0);
     assert_eq!(handle.status().work, SynchronizationWork::default());
 }

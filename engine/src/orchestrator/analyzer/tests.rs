@@ -1,9 +1,6 @@
 use super::*;
 use crate::{
-    detectors::{
-        context::{Environment, File, Observations, PathRoot},
-        observation::ObservationCoverage,
-    },
+    detectors::{Environment, File, ObservationCoverage, Observations, PathRoot},
     inventory::models::{Baseline, InventoryLookupStatus, LocalState, RemoteState},
     models::{
         AccountId, Checksum, DateTime, Evidence, FileIdentity, FileKind, FileState,
@@ -284,7 +281,7 @@ fn differing_bytes_or_ambiguous_candidates_do_not_adopt_even_with_authorization(
     file.remote.checksum = checksum("different");
     assert!(analyze(&file).operations.is_empty());
     file.remote.checksum = file.local.checksum.clone();
-    let candidate = crate::detectors::context::AssociationCandidate {
+    let candidate = crate::detectors::AssociationCandidate {
         local: file.local.clone(),
         remote: file.remote.clone(),
         parents_correspond: Evidence::Known(true),

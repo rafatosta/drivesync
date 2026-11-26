@@ -1,6 +1,6 @@
 //! Scope invalidation derived from verified Operator receipts.
 use crate::{
-    detectors::context::File,
+    detectors::File,
     inventory::models::AppliedEffect,
     models::{Evidence, ItemId, LocalIdentity, Path, RemoteId},
 };

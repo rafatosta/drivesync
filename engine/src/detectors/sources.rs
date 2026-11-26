@@ -2,7 +2,7 @@
 use super::{
     activity::{
         ActivityGuard, ActivityPublisher, ActivitySession, Details, Origin, Phase, Progress,
-        ScanUpdate, Source, State, Unit, Wait,
+        ScanProgress, ScanState, ScanUpdate, Source, State, Unit, Wait,
     },
     observation::models::{CaptureEntries, ScopeCapture},
     observation::{
@@ -23,10 +23,7 @@ use crate::{
     models::*,
     orchestrator::{OrchestratorConfig, OrchestratorHandle},
     providers::google::GoogleDriveClient,
-    synchronization::{
-        SynchronizationIssue, SynchronizationIssueKind, SynchronizationScanState,
-        SynchronizationWait,
-    },
+    synchronization::{SynchronizationIssue, SynchronizationIssueKind, SynchronizationWait},
 };
 use std::{
     future::{poll_fn, Future},
@@ -64,8 +61,8 @@ pub(crate) fn start(
     ownership: Arc<RwLock<()>>,
 ) -> SourceTasks {
     let cancel = CancellationToken::new();
-    let local_session = orchestrator.detector_session(Source::Local);
-    let remote_session = orchestrator.detector_session(Source::Remote);
+    let local_session = detectors.activities.open(Source::Local);
+    let remote_session = detectors.activities.open(Source::Remote);
     let worker = Arc::new(SourceWorker {
         config,
         detectors,
@@ -105,7 +102,7 @@ impl SourceWorker {
             .begin(source.origin(), None, phase, state, Details::default())
     }
 
-    fn scan_state(&self, source: Source, state: SynchronizationScanState, items: Option<u64>) {
+    fn scan_state(&self, source: Source, state: ScanState, items: Option<u64>) {
         self.publisher(source).scan(ScanUpdate::State(state, items));
     }
 
@@ -115,11 +112,11 @@ impl SourceWorker {
             _ = cancelled(&self.cancel) => {},
             _ = async {
                 self.scan_state(source, if scanning {
-                    SynchronizationScanState::Reading
+                    ScanState::Reading
                 } else if problem {
-                    SynchronizationScanState::RetryScheduled
+                    ScanState::RetryScheduled
                 } else {
-                    SynchronizationScanState::Complete
+                    ScanState::Complete
                 }, None);
                 self.handle.source_status(source, scanning, problem.then(|| issue(source))).await
             } => {},
@@ -127,7 +124,7 @@ impl SourceWorker {
     }
 
     async fn failed(&self, source: Source) {
-        self.scan_state(source, SynchronizationScanState::Failed, None);
+        self.scan_state(source, ScanState::Failed, None);
         report_failure(&self.handle, source, &self.cancel).await;
     }
 }
@@ -141,7 +138,7 @@ fn supervise(
     tokio::spawn(async move {
         let unexpected = task.await.is_err() && !worker.cancel.is_cancelled();
         if unexpected {
-            worker.scan_state(source, SynchronizationScanState::Failed, None);
+            worker.scan_state(source, ScanState::Failed, None);
         }
         drop(session);
         if unexpected {
@@ -200,7 +197,7 @@ async fn deliver(
         };
         let files = match detectors
             .clone()
-            .contextualize_batch(observation, &delivery)
+            .contextualize_batch(observation, Some(&delivery))
             .await
         {
             Ok(file) => file,
@@ -342,7 +339,7 @@ async fn local(worker: Arc<SourceWorker>) {
         if initial {
             worker.health(Source::Local, true, true).await;
         }
-        local.scan(ScanUpdate::Progress(super::observation::ScanProgress {
+        local.scan(ScanUpdate::Progress(ScanProgress {
             path: Some(Path::new()),
             items: 0,
             pages: 0,
@@ -387,9 +384,9 @@ async fn local(worker: Arc<SourceWorker>) {
                 worker.scan_state(
                     Source::Local,
                     if coverage == ObservationCoverage::Complete {
-                        SynchronizationScanState::Complete
+                        ScanState::Complete
                     } else {
-                        SynchronizationScanState::RetryScheduled
+                        ScanState::RetryScheduled
                     },
                     Some(observations.len() as u64),
                 );
@@ -537,7 +534,7 @@ async fn remote(
         // A paginated traversal may have started before a concurrent operation. Keep
         // the original epoch until every page has been collected or the round fails.
         let epoch = *collection_epoch.get_or_insert_with(|| handle.collection_epoch());
-        worker.scan_state(Source::Remote, SynchronizationScanState::Reading, None);
+        worker.scan_state(Source::Remote, ScanState::Reading, None);
         let collecting = collection
             .get_or_insert_with(|| worker.begin(Source::Remote, Phase::Collect, State::Running));
         collecting.set_state(State::Running);
@@ -625,7 +622,7 @@ async fn remote(
                     }
                     worker.scan_state(
                         Source::Remote,
-                        SynchronizationScanState::Complete,
+                        ScanState::Complete,
                         Some(result.observations.len() as u64),
                     );
                 }

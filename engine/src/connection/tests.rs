@@ -902,7 +902,7 @@ async fn coordination_start_is_idempotent_with_sources_isolated() {
 }
 #[tokio::test]
 async fn observation_ingress_uses_context_and_defers_without_inventing_the_other_side() {
-    use crate::detectors::observation::{Observation, ObservationCoverage, RemoteObservation};
+    use crate::detectors::{Observation, ObservationCoverage, RemoteObservation};
     use crate::models::*;
     use crate::{SynchronizationIssueKind, SynchronizationState};
     let fixture = Fixture::new(replies("observed-user")).await;
