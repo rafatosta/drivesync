@@ -3,11 +3,16 @@ mod conflicts;
 mod projections;
 mod recovery;
 mod resume;
+mod transfer;
 mod trash;
+use transfer::receive_verified;
 struct UploadCursor {
     session: GoogleUploadSession,
     offset: u64,
 }
+use super::activity::{
+    self, Algorithm, Bytes, Effect, HashProgress, Outcome, Phase, Progress, Span, State, Unit, Wait,
+};
 use super::journal::ExecutionJournal;
 use super::{
     filesystem::{self, Filesystem},
@@ -22,10 +27,7 @@ use crate::{
     providers::google::*,
 };
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeSet,
-    io::{Read, Write},
-};
+use std::{collections::BTreeSet, io::Write};
 const FIELDS: &str =
     "id,name,mimeType,parents,size,sha256Checksum,md5Checksum,headRevisionId,version,trashed,capabilities,webViewLink,appProperties,properties";
 const FOLDER: &str = "application/vnd.google-apps.folder";
@@ -43,20 +45,91 @@ impl GoogleOperator {
         id: &RemoteId,
     ) -> Result<GoogleFileSnapshot, OperatorError> {
         let mut snapshot = self.snapshot_metadata(session, id).await?;
-        self.client
-            .fill_content_sha256(session, &mut snapshot.file, None)
-            .await
-            .map_err(read_error)?;
+        let mut download = Span::default();
+        let mut verification = None;
+        let mut revalidate = Span::default();
+        let mut bytes = Bytes::default();
+        let verified = self
+            .client
+            .fill_content_sha256_observed(session, &mut snapshot.file, None, |event| match event {
+                ContentVerification::Request(total) => {
+                    download = Span::start(Phase::Download, State::Waiting(Wait::Response));
+                    verification = Some(HashProgress::new(
+                        Phase::VerifyContent,
+                        Some(total),
+                        Algorithm::Md5AndSha256,
+                    ));
+                    bytes = Bytes {
+                        received: Some(0),
+                        total: Some(total),
+                        ..Bytes::default()
+                    };
+                }
+                ContentVerification::Chunk(count) => {
+                    bytes.received = Some(bytes.received.unwrap_or(0) + count as u64);
+                    download.progress(Progress::Bytes(bytes), false);
+                    if let Some(hash) = &mut verification {
+                        hash.processed(count);
+                    }
+                }
+                ContentVerification::Received => {
+                    download.progress(Progress::Bytes(bytes), true);
+                    download.finish(Outcome::Complete);
+                }
+                ContentVerification::Revalidate => {
+                    if let Some(mut hash) = verification.take() {
+                        hash.finish(Outcome::Complete);
+                    }
+                    revalidate =
+                        Span::start(Phase::ValidateVersion, State::Waiting(Wait::Provider));
+                }
+            })
+            .await;
+        if download.enabled() {
+            download.progress(Progress::Bytes(bytes), true);
+            download.result(&verified);
+            if let Some(mut hash) = verification.take() {
+                hash.finish(Outcome::Cancelled);
+            }
+        }
+        if let Some(mut hash) = verification {
+            hash.result(&verified);
+        }
+        if revalidate.enabled() {
+            revalidate.progress(
+                Progress::Count {
+                    unit: Unit::Requests,
+                    completed: 1,
+                    total: Some(1),
+                },
+                true,
+            );
+            revalidate.result(&verified);
+        }
+        verified.map_err(read_error)?;
         Ok(snapshot)
     }
+    async fn verify_effect(
+        &self,
+        session: &GoogleSession,
+        id: &RemoteId,
+    ) -> Result<GoogleFileSnapshot, OperatorError> {
+        activity::waiting(
+            Phase::VerifyEffect,
+            Wait::Provider,
+            self.snapshot(session, id),
+        )
+        .await
+    }
+
     async fn snapshot_metadata(
         &self,
         session: &GoogleSession,
         id: &RemoteId,
     ) -> Result<GoogleFileSnapshot, OperatorError> {
-        let snapshot = self
-            .client
-            .files_get_snapshot(
+        let snapshot = activity::request(
+            Phase::ReadMetadata,
+            self.client.files_get_snapshot(
                 session,
                 &FileId(id.0.clone()),
                 FileGetOptions {
@@ -64,9 +137,10 @@ impl GoogleOperator {
                     supports_all_drives: Some(true),
                     ..Default::default()
                 },
-            )
-            .await
-            .map_err(read_error)?;
+            ),
+        )
+        .await
+        .map_err(read_error)?;
         if snapshot.file.id.as_ref().map(|actual| actual.0.as_str()) != Some(id.0.as_str()) {
             return Err(filesystem::stale());
         }
@@ -79,26 +153,51 @@ impl GoogleOperator {
         id: &RemoteId,
         root: &RemoteId,
     ) -> Result<(), OperatorError> {
-        let mut next = id.clone();
-        let mut visited = BTreeSet::new();
-        for _ in 0..128 {
-            if &next == root {
-                return Ok(());
-            }
-            if !visited.insert(next.clone()) {
-                return Err(filesystem::stale());
-            }
-            let file = self.snapshot_metadata(session, &next).await?.file;
-            if &next != id && file.trashed != Some(false) {
-                return Err(filesystem::stale());
-            }
-            let parents = file.parents.ok_or_else(filesystem::stale)?;
-            if parents.len() != 1 {
-                return Err(filesystem::stale());
-            }
-            next = RemoteId(parents[0].0.clone());
-        }
-        Err(filesystem::stale())
+        let mut span = Span::start(Phase::ResolveAncestors, State::Running);
+        let mut checked = 0;
+        let result = span
+            .within(async {
+                let mut next = id.clone();
+                let mut visited = BTreeSet::new();
+                for _ in 0..128 {
+                    if &next == root {
+                        return Ok(());
+                    }
+                    if !visited.insert(next.clone()) {
+                        return Err(filesystem::stale());
+                    }
+                    let file = self.snapshot_metadata(session, &next).await?.file;
+                    checked += 1;
+                    span.progress(
+                        Progress::Count {
+                            unit: Unit::Ancestors,
+                            completed: checked,
+                            total: None,
+                        },
+                        false,
+                    );
+                    if &next != id && file.trashed != Some(false) {
+                        return Err(filesystem::stale());
+                    }
+                    let parents = file.parents.ok_or_else(filesystem::stale)?;
+                    if parents.len() != 1 {
+                        return Err(filesystem::stale());
+                    }
+                    next = RemoteId(parents[0].0.clone());
+                }
+                Err(filesystem::stale())
+            })
+            .await;
+        span.progress(
+            Progress::Count {
+                unit: Unit::Ancestors,
+                completed: checked,
+                total: None,
+            },
+            true,
+        );
+        span.result(&result);
+        result
     }
     async fn destination(
         &self,
@@ -138,9 +237,8 @@ impl GoogleOperator {
             return Err(filesystem::stale());
         }
         let quote = |s: &str| s.replace('\\', "\\\\").replace('\'', "\\'");
-        let matches = self
-            .client
-            .files_list(
+        let matches = activity::page(
+            self.client.files_list(
                 session,
                 FileListOptions {
                     q: Some(format!(
@@ -154,9 +252,11 @@ impl GoogleOperator {
                     include_items_from_all_drives: Some(true),
                     ..Default::default()
                 },
-            )
-            .await
-            .map_err(read_error)?;
+            ),
+            |page| page.files.len(),
+        )
+        .await
+        .map_err(read_error)?;
         if matches.incomplete_search != Some(false)
             || (!requires_write && except.is_some() && matches.files.len() != 1)
             || matches.next_page_token.is_some()
@@ -176,57 +276,107 @@ impl GoogleOperator {
         session: &GoogleSession,
         parents: Vec<RemoteId>,
     ) -> Result<Vec<RemoteState>, OperatorError> {
-        let mut seen = BTreeSet::new();
-        let mut ancestors = Vec::new();
-        for mut next in parents {
-            for _ in 0..128 {
-                if next == config.remote_root_id || seen.contains(&next) {
-                    break;
+        let mut span = Span::start(Phase::ResolveAncestors, State::Running);
+        let mut checked = 0;
+        let result = span
+            .within(async {
+                let mut seen = BTreeSet::new();
+                let mut ancestors = Vec::new();
+                for mut next in parents {
+                    for _ in 0..128 {
+                        if next == config.remote_root_id || seen.contains(&next) {
+                            break;
+                        }
+                        seen.insert(next.clone());
+                        let state = normalize(&self.snapshot(session, &next).await?.file);
+                        checked += 1;
+                        span.progress(
+                            Progress::Count {
+                                unit: Unit::Ancestors,
+                                completed: checked,
+                                total: None,
+                            },
+                            false,
+                        );
+                        if state.trashed != Evidence::Known(false)
+                            || state.mime_type != Evidence::Known(FOLDER.into())
+                        {
+                            return Err(filesystem::stale());
+                        }
+                        let Evidence::Known(ids) = &state.parents else {
+                            return Err(filesystem::stale());
+                        };
+                        if ids.len() != 1 {
+                            return Err(filesystem::stale());
+                        }
+                        next = ids[0].clone();
+                        ancestors.push(state);
+                    }
+                    if next != config.remote_root_id && !seen.contains(&next) {
+                        return Err(filesystem::stale());
+                    }
                 }
-                seen.insert(next.clone());
-                let state = normalize(&self.snapshot(session, &next).await?.file);
-                if state.trashed != Evidence::Known(false)
-                    || state.mime_type != Evidence::Known(FOLDER.into())
-                {
-                    return Err(filesystem::stale());
-                }
-                let Evidence::Known(ids) = &state.parents else {
-                    return Err(filesystem::stale());
-                };
-                if ids.len() != 1 {
-                    return Err(filesystem::stale());
-                }
-                next = ids[0].clone();
-                ancestors.push(state);
-            }
-            if next != config.remote_root_id && !seen.contains(&next) {
-                return Err(filesystem::stale());
-            }
-        }
-        Ok(ancestors)
+                Ok(ancestors)
+            })
+            .await;
+        span.progress(
+            Progress::Count {
+                unit: Unit::Ancestors,
+                completed: checked,
+                total: None,
+            },
+            true,
+        );
+        span.result(&result);
+        result
     }
     async fn check_ancestry(
         &self,
         session: &GoogleSession,
         ancestors: &[RemoteState],
     ) -> Result<(), OperatorError> {
-        for expected in ancestors {
-            let current = normalize(
-                &self
-                    .snapshot(session, expected.id.as_ref().ok_or_else(filesystem::stale)?)
-                    .await?
-                    .file,
-            );
-            if current.id != expected.id
-                || current.name != expected.name
-                || current.parents != expected.parents
-                || current.mime_type != expected.mime_type
-                || current.trashed != expected.trashed
-            {
-                return Err(filesystem::stale());
-            }
-        }
-        Ok(())
+        let mut span = Span::start(Phase::ResolveAncestors, State::Running);
+        let mut checked = 0;
+        let result = span
+            .within(async {
+                for expected in ancestors {
+                    let current = normalize(
+                        &self
+                            .snapshot(session, expected.id.as_ref().ok_or_else(filesystem::stale)?)
+                            .await?
+                            .file,
+                    );
+                    checked += 1;
+                    span.progress(
+                        Progress::Count {
+                            unit: Unit::Ancestors,
+                            completed: checked,
+                            total: Some(ancestors.len() as u64),
+                        },
+                        false,
+                    );
+                    if current.id != expected.id
+                        || current.name != expected.name
+                        || current.parents != expected.parents
+                        || current.mime_type != expected.mime_type
+                        || current.trashed != expected.trashed
+                    {
+                        return Err(filesystem::stale());
+                    }
+                }
+                Ok(())
+            })
+            .await;
+        span.progress(
+            Progress::Count {
+                unit: Unit::Ancestors,
+                completed: checked,
+                total: Some(ancestors.len() as u64),
+            },
+            true,
+        );
+        span.result(&result);
+        result
     }
     async fn run_with_journal(
         &self,
@@ -435,7 +585,7 @@ impl GoogleOperator {
                     .map_err(OperatorError::uncertain)?;
                 {
                     let after = self
-                        .snapshot(
+                        .verify_effect(
                             session,
                             op.remote_id.as_ref().ok_or_else(filesystem::stale)?,
                         )
@@ -491,8 +641,9 @@ impl GoogleOperator {
                     if r.local.kind != Evidence::Known(FileKind::Directory) {
                         return Err(filesystem::stale());
                     }
-                    self.client
-                        .files_create(
+                    activity::mutation(
+                        Phase::Dispatch,
+                        self.client.files_create(
                             session,
                             metadata,
                             FileCreateOptions {
@@ -500,9 +651,10 @@ impl GoogleOperator {
                                 supports_all_drives: Some(true),
                                 ..Default::default()
                             },
-                        )
-                        .await
-                        .map_err(mutation_error)?
+                        ),
+                    )
+                    .await
+                    .map_err(mutation_error)?
                 } else {
                     self.upload(session, r, fs, metadata, None, journal).await?
                 };
@@ -515,7 +667,7 @@ impl GoogleOperator {
                     return Err(filesystem::stale().uncertain());
                 }
                 let observed = self
-                    .snapshot(session, &id)
+                    .verify_effect(session, &id)
                     .await
                     .map_err(OperatorError::uncertain)?
                     .file;
@@ -635,18 +787,24 @@ impl GoogleOperator {
                 if op.action == OperationAction::TrashRemote {
                     self.trash_guard(config, r, fs, session).await?;
                 }
-                self.client
-                    .files_update_conditional(
+                activity::mutation(
+                    if op.action == OperationAction::TrashRemote {
+                        Phase::Trash
+                    } else {
+                        Phase::Dispatch
+                    },
+                    self.client.files_update_conditional(
                         session,
                         &FileId(id.0.clone()),
                         metadata,
                         options,
                         etag,
-                    )
-                    .await
-                    .map_err(mutation_error)?;
+                    ),
+                )
+                .await
+                .map_err(mutation_error)?;
                 let after = self
-                    .snapshot(session, id)
+                    .verify_effect(session, id)
                     .await
                     .map_err(OperatorError::uncertain)?
                     .file;
@@ -723,7 +881,7 @@ impl GoogleOperator {
                     journal,
                 )
                 .await?;
-                self.snapshot(session, op.remote_id.as_ref().unwrap())
+                self.verify_effect(session, op.remote_id.as_ref().unwrap())
                     .await
                     .map_err(OperatorError::uncertain)?
                     .file
@@ -756,20 +914,24 @@ impl GoogleOperator {
                     .as_ref()
                     .and_then(|s| s.parse::<u64>().ok())
                     .ok_or_else(filesystem::stale)?;
-                let mut stream = self
-                    .client
-                    .get_file_bytes(
+                let mut stream = activity::request(
+                    Phase::DownloadHeaders,
+                    self.client.get_file_bytes(
                         session,
                         &FileId(op.remote_id.as_ref().unwrap().0.clone()),
                         None,
-                    )
-                    .await
-                    .map_err(read_error)?;
+                    ),
+                )
+                .await
+                .map_err(read_error)?;
                 let mut temp = fs.temporary()?;
                 receive_verified(&mut stream.body, &mut temp, size, expected).await?;
-                let mut after = self
-                    .snapshot_metadata(session, op.remote_id.as_ref().unwrap())
-                    .await?;
+                let mut after = activity::waiting(
+                    Phase::ValidateVersion,
+                    Wait::Provider,
+                    self.snapshot_metadata(session, op.remote_id.as_ref().unwrap()),
+                )
+                .await?;
                 if after.file.version != snapshot.file.version
                     || after.file.head_revision_id != snapshot.file.head_revision_id
                     || after.file.size != snapshot.file.size
@@ -816,7 +978,7 @@ impl GoogleOperator {
                     .map_err(filesystem::error)?;
                 local = Some(fs.install(r, &mut temp, journal)?);
                 let after = self
-                    .snapshot(session, id)
+                    .verify_effect(session, id)
                     .await
                     .map_err(OperatorError::uncertain)?;
                 if after.file.version != snapshot.file.version {
@@ -839,6 +1001,7 @@ impl GoogleOperator {
             local = Some(fs.check(&r.local).map_err(OperatorError::uncertain)?);
         }
         let remote = normalize(&remote);
+        let mut verification = Span::start(Phase::VerifyEffect, State::Running);
         let mut verified = true;
         if matches!(
             op.action,
@@ -848,6 +1011,19 @@ impl GoogleOperator {
                 .as_ref()
                 .is_some_and(|l| crate::orchestrator::evidence::equivalent(l, &remote));
         }
+        verification.effect(
+            if verified {
+                Effect::Verified
+            } else {
+                Effect::Applied
+            },
+            false,
+        );
+        verification.finish(if verified {
+            Outcome::Complete
+        } else {
+            Outcome::Unconfirmed
+        });
         Ok(AppliedEffect {
             remote_id: remote.id.clone(),
             local,
@@ -855,204 +1031,6 @@ impl GoogleOperator {
             verified,
         })
     }
-    async fn upload(
-        &self,
-        session: &GoogleSession,
-        r: &ExecuteOperationRequest,
-        fs: &Filesystem,
-        metadata: GoogleFileWrite,
-        etag: Option<&str>,
-        journal: Option<&dyn ExecutionJournal>,
-    ) -> Result<GoogleFile, OperatorError> {
-        let path = r
-            .operation
-            .local_path
-            .as_deref()
-            .ok_or_else(filesystem::invalid)?;
-        fs.check(&r.local)?;
-        let input = fs.read(path)?;
-        let stamp = filesystem::stamp(&input.metadata().map_err(filesystem::error)?);
-        let total = stamp.2;
-        let upload = if r.operation.action == OperationAction::UpdateRemoteContent {
-            self.client
-                .start_resumable_update_conditional(
-                    session,
-                    &FileId(
-                        r.operation
-                            .remote_id
-                            .as_ref()
-                            .ok_or_else(filesystem::invalid)?
-                            .0
-                            .clone(),
-                    ),
-                    metadata,
-                    FileUpdateOptions {
-                        fields: Some(FieldMask(FIELDS.into())),
-                        supports_all_drives: Some(true),
-                        ..Default::default()
-                    },
-                    Some(total),
-                    etag.ok_or_else(filesystem::stale)?,
-                )
-                .await
-        } else {
-            self.client
-                .start_resumable_create(
-                    session,
-                    metadata,
-                    FileCreateOptions {
-                        fields: Some(FieldMask(FIELDS.into())),
-                        supports_all_drives: Some(true),
-                        ..Default::default()
-                    },
-                    Some(total),
-                )
-                .await
-        }
-        .map_err(mutation_error)?;
-        if matches!(
-            r.operation.action,
-            OperationAction::Upload | OperationAction::UpdateRemoteContent
-        ) {
-            journal
-                .ok_or_else(filesystem::stale)?
-                .checkpoint(RecoveryCheckpoint::Transfer(TransferReference {
-                    session_uri: upload.session_uri.clone(),
-                    total_bytes: total,
-                    confirmed_offset: 0,
-                }))?;
-        }
-        self.transfer(
-            session,
-            r,
-            fs,
-            UploadCursor {
-                session: upload,
-                offset: 0,
-            },
-            etag,
-            journal,
-        )
-        .await
-    }
-    async fn transfer(
-        &self,
-        session: &GoogleSession,
-        r: &ExecuteOperationRequest,
-        fs: &Filesystem,
-        cursor: UploadCursor,
-        etag: Option<&str>,
-        journal: Option<&dyn ExecutionJournal>,
-    ) -> Result<GoogleFile, OperatorError> {
-        let _sample = crate::performance::Sample::begin("upload_transfer");
-        use std::io::{Seek, SeekFrom};
-        fs.check(&r.local).map_err(OperatorError::uncertain)?;
-        let mut input = fs.read(
-            r.operation
-                .local_path
-                .as_deref()
-                .ok_or_else(filesystem::invalid)?,
-        )?;
-        let stamp = filesystem::stamp(&input.metadata().map_err(filesystem::error)?);
-        let total = stamp.2;
-        let upload = cursor.session;
-        let mut offset = cursor.offset;
-        if upload.total_bytes != Some(total) || offset > total {
-            return Err(filesystem::stale().uncertain());
-        }
-        input
-            .seek(SeekFrom::Start(offset))
-            .map_err(filesystem::error)?;
-        loop {
-            let remaining = (total - offset).min(256 * 1024) as usize;
-            let mut bytes = vec![0; remaining];
-            input
-                .read_exact(&mut bytes)
-                .map_err(|e| filesystem::error(e).uncertain())?;
-            if filesystem::stamp(&input.metadata().map_err(filesystem::error)?) != stamp {
-                return Err(filesystem::stale().uncertain());
-            }
-            let chunk = GoogleUploadChunk {
-                start: offset,
-                bytes,
-                total_bytes: Some(total),
-            };
-            let progress = if let Some(etag) = etag {
-                self.client
-                    .upload_chunk_conditional(session, &upload, chunk, etag)
-                    .await
-            } else {
-                self.client.upload_chunk(session, &upload, chunk).await
-            }
-            .map_err(mutation_error)?;
-            if filesystem::stamp(&input.metadata().map_err(filesystem::error)?) != stamp {
-                return Err(filesystem::stale().uncertain());
-            }
-            offset += remaining as u64;
-            match progress {
-                GoogleUploadProgress::Complete { file } if offset == total => {
-                    if matches!(
-                        r.operation.action,
-                        OperationAction::Upload | OperationAction::UpdateRemoteContent
-                    ) {
-                        journal.ok_or_else(filesystem::stale)?.checkpoint(
-                            RecoveryCheckpoint::Transfer(TransferReference {
-                                session_uri: upload.session_uri.clone(),
-                                total_bytes: total,
-                                confirmed_offset: offset,
-                            }),
-                        )?;
-                    }
-                    return Ok(file);
-                }
-                GoogleUploadProgress::Incomplete {
-                    received_range: Some(range),
-                } if range.start == 0
-                    && range.end_inclusive == offset.checked_sub(1)
-                    && offset < total =>
-                {
-                    if matches!(
-                        r.operation.action,
-                        OperationAction::Upload | OperationAction::UpdateRemoteContent
-                    ) {
-                        journal.ok_or_else(filesystem::stale)?.checkpoint(
-                            RecoveryCheckpoint::Transfer(TransferReference {
-                                session_uri: upload.session_uri.clone(),
-                                total_bytes: total,
-                                confirmed_offset: offset,
-                            }),
-                        )?;
-                    }
-                }
-                _ => return Err(filesystem::stale().uncertain()),
-            }
-        }
-    }
-}
-/// Media must be completely written and verified before the caller can publish its stage.
-async fn receive_verified(
-    stream: &mut GoogleByteStream,
-    output: &mut (impl Write + Send),
-    size: u64,
-    expected: &str,
-) -> Result<(), OperatorError> {
-    let _sample = crate::performance::Sample::begin("download_transfer_and_verification");
-    let mut digest = Sha256::new();
-    let mut count = 0u64;
-    while let Some(bytes) = stream.next_chunk().await.map_err(read_error)? {
-        count = count
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(filesystem::stale)?;
-        if count > size {
-            return Err(filesystem::stale());
-        }
-        output.write_all(&bytes).map_err(filesystem::error)?;
-        digest.update(&bytes);
-    }
-    if count != size || !format!("{:x}", digest.finalize()).eq_ignore_ascii_case(expected) {
-        return Err(filesystem::stale());
-    }
-    Ok(())
 }
 
 impl RemoteExecutor for GoogleOperator {
@@ -1064,12 +1042,14 @@ impl RemoteExecutor for GoogleOperator {
         journal: &'a dyn ExecutionJournal,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RecoveryAssessment> + Send + 'a>> {
         Box::pin(async move {
-            let session = match self
-                .accounts
-                .acquire_session(AcquireSessionRequest {
+            let session = match activity::waiting(
+                Phase::AcquireSession,
+                Wait::Authorization,
+                self.accounts.acquire_session(AcquireSessionRequest {
                     account_id: config.account_id.clone(),
-                })
-                .await
+                }),
+            )
+            .await
             {
                 Ok(session) => session,
                 Err(_) => {
@@ -1096,27 +1076,30 @@ impl RemoteExecutor for GoogleOperator {
             ) {
                 return Ok(None);
             }
-            let session = self
-                .accounts
-                .acquire_session(AcquireSessionRequest {
+            let session = activity::waiting(
+                Phase::AcquireSession,
+                Wait::Authorization,
+                self.accounts.acquire_session(AcquireSessionRequest {
                     account_id: config.account_id.clone(),
-                })
-                .await
-                .map_err(|_| OperatorError::new(OperatorErrorKind::PermissionDenied))?;
-            let ids = self
-                .client
-                .files_generate_ids(
+                }),
+            )
+            .await
+            .map_err(|_| OperatorError::new(OperatorErrorKind::PermissionDenied))?;
+            let ids = activity::request(
+                Phase::Prepare,
+                self.client.files_generate_ids(
                     session.session.google(),
                     GenerateIdsOptions {
                         count: Some(1),
                         space: Some("drive".into()),
                         type_: Some("files".into()),
                     },
-                )
-                .await
-                .map_err(read_error)?
-                .ids
-                .ok_or_else(filesystem::stale)?;
+                ),
+            )
+            .await
+            .map_err(read_error)?
+            .ids
+            .ok_or_else(filesystem::stale)?;
             if ids.len() != 1 || ids[0].0.is_empty() {
                 return Err(filesystem::stale());
             }
@@ -1130,12 +1113,14 @@ impl RemoteExecutor for GoogleOperator {
         fs: &'a Filesystem,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RecoveryAssessment> + Send + 'a>> {
         Box::pin(async move {
-            let session = match self
-                .accounts
-                .acquire_session(AcquireSessionRequest {
+            let session = match activity::waiting(
+                Phase::AcquireSession,
+                Wait::Authorization,
+                self.accounts.acquire_session(AcquireSessionRequest {
                     account_id: config.account_id.clone(),
-                })
-                .await
+                }),
+            )
+            .await
             {
                 Ok(session) => session,
                 Err(_) => {
@@ -1166,13 +1151,15 @@ impl RemoteExecutor for GoogleOperator {
             if account.provider != config.provider_id {
                 return Err(OperatorError::new(OperatorErrorKind::PermissionDenied));
             }
-            let session = self
-                .accounts
-                .acquire_session(AcquireSessionRequest {
+            let session = activity::waiting(
+                Phase::AcquireSession,
+                Wait::Authorization,
+                self.accounts.acquire_session(AcquireSessionRequest {
                     account_id: config.account_id.clone(),
-                })
-                .await
-                .map_err(|_| OperatorError::new(OperatorErrorKind::PermissionDenied))?;
+                }),
+            )
+            .await
+            .map_err(|_| OperatorError::new(OperatorErrorKind::PermissionDenied))?;
             self.run_with_journal(config, r, fs, session.session.google(), journal)
                 .await
         })

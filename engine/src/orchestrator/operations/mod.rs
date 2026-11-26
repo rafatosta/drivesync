@@ -1,4 +1,5 @@
 //! Execution with fixed scope, optimistic persistence, and explicit uncertain effects.
+mod activity;
 mod conflicts;
 mod filesystem;
 mod google;
@@ -13,6 +14,12 @@ use crate::{
     accounts::{Accounts, GetAccountRequest},
     inventory::{models::*, Inventory},
     models::*,
+};
+pub(super) use activity::{Activity, ActivityInbox, Scope as ActivityScope};
+use activity::{Effect, Kind, Outcome, Phase, Span, State, Wait};
+#[cfg(test)]
+pub(super) use activity::{
+    Phase as OperationPhase, State as OperationActivityState, Wait as OperationWait,
 };
 use filesystem::Filesystem;
 #[cfg(test)]
@@ -108,13 +115,23 @@ impl PersistingOperator {
         revision: Option<u64>,
         effect: PersistedEffect,
     ) -> InventoryWriteResult {
-        self.inventory.write(InventoryWrite {
-            operation_id: request.execution_id.clone(),
-            item_id: request.operation.item_ref.clone(),
-            identity: request.identity.clone(),
-            expected_revision: revision,
-            effect,
-            recorded_at: now(),
+        let phase = match &effect {
+            PersistedEffect::Pending(_) => Phase::RecordIntent,
+            PersistedEffect::OperationConfirmed
+            | PersistedEffect::BaselineConfirmed { .. }
+            | PersistedEffect::ItemRegistered { .. }
+            | PersistedEffect::ConvergenceConfirmed { .. } => Phase::Confirm,
+            _ => Phase::PersistEffect,
+        };
+        activity::persist(phase, || {
+            self.inventory.write(InventoryWrite {
+                operation_id: request.execution_id.clone(),
+                item_id: request.operation.item_ref.clone(),
+                identity: request.identity.clone(),
+                expected_revision: revision,
+                effect,
+                recorded_at: now(),
+            })
         })
     }
     /// Only corresponding, equivalent current replicas may replace a synchronization baseline.
@@ -211,6 +228,7 @@ impl PersistingOperator {
         &self,
         r: &ExecuteOperationRequest,
         mut result: OperationResult,
+        span: &Span,
     ) -> OperationResult {
         let action = r.operation.action;
         if action == OperationAction::Adopt && !self.config.initial_association_authorized {
@@ -260,7 +278,12 @@ impl PersistingOperator {
             current.identity.local_identity = local.identity.clone();
         }
         current.identity.remote_id = effect.remote_id.clone();
+        span.phase(Phase::Confirm, State::Running);
         let receipt = self.write(&current, r.expected_revision, persisted);
+        span.receipt(receipt.status);
+        if receipt.status == WriteStatus::Written {
+            span.effect(Effect::Verified, true);
+        }
         result.status = if receipt.status == WriteStatus::Written {
             OperationResultStatus::Succeeded
         } else {
@@ -307,12 +330,14 @@ impl PersistingOperator {
             return Err(filesystem::stale());
         }
         self.filesystem.check(&r.local)?;
-        let entries = verify_local_scope(
-            self.config.local_root.clone(),
-            self.config.sync_root_id.clone(),
-            LocalVerification::ExpandLimit,
-        )
-        .map_err(|_| filesystem::stale())?;
+        let entries = activity::measured(Phase::VerifyLocalScope, State::Running, || {
+            verify_local_scope(
+                self.config.local_root.clone(),
+                self.config.sync_root_id.clone(),
+                LocalVerification::ExpandLimit,
+            )
+            .map_err(|_| filesystem::stale())
+        })?;
         if entries
             .values()
             .any(|e| e.identity == stored.identity.local_identity)
@@ -352,12 +377,14 @@ impl PersistingOperator {
         {
             return Err(filesystem::stale());
         }
-        let entries = verify_local_scope(
-            self.config.local_root.clone(),
-            self.config.sync_root_id.clone(),
-            LocalVerification::ExpandLimit,
-        )
-        .map_err(|_| filesystem::stale())?;
+        let entries = activity::measured(Phase::VerifyLocalScope, State::Running, || {
+            verify_local_scope(
+                self.config.local_root.clone(),
+                self.config.sync_root_id.clone(),
+                LocalVerification::ExpandLimit,
+            )
+            .map_err(|_| filesystem::stale())
+        })?;
         if entries
             .values()
             .filter(|e| e.identity == r.local.identity)
@@ -578,8 +605,29 @@ impl Operator for PersistingOperator {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), OperatorError>> + Send + 'a>>
     {
         Box::pin(async move {
-            let _guard = self.gate.lock().await;
-            self.record_conflict(file, reason)
+            let mut span = if file.identity.account_id == self.config.account_id
+                && file.identity.sync_root_id == self.config.sync_root_id
+            {
+                Span::execution(
+                    &self.config,
+                    Kind::RecordConflict,
+                    None,
+                    file.identity.item_id.as_ref(),
+                    Phase::Receive,
+                )
+            } else {
+                Span::default()
+            };
+            let result = span
+                .within(async {
+                    span.phase(Phase::Acquire, State::Waiting(Wait::OperatorGate));
+                    let _guard = self.gate.lock().await;
+                    span.phase(Phase::RecordConflict, State::Running);
+                    self.record_conflict(file, reason)
+                })
+                .await;
+            span.result(&result);
+            result
         })
     }
     fn recover_with<'a>(
@@ -590,159 +638,213 @@ impl Operator for PersistingOperator {
     }
     fn execute<'a>(&'a self, r: ExecuteOperationRequest) -> OperationFuture<'a> {
         Box::pin(async move {
-            let _guard = self.gate.lock().await;
-            let mut result = OperationResult {
-                operation_id: r.execution_id.clone(),
-                item_id: r.operation.item_ref.clone(),
-                action: r.operation.action,
-                status: OperationResultStatus::Skipped,
-                effect: None,
-                completed_at: None,
-                error: None,
-                inventory_write: None,
-            };
-            let _lease = match self.inventory.execution_lease() {
-                Ok(lease) => lease,
-                Err(_) => {
-                    result.error =
-                        Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
-                    return result;
-                }
-            };
-            if let Err(error) = self.validate(&r) {
-                result.error = Some(error.failure());
-                return result;
-            }
-            if matches!(
-                r.operation.action,
-                OperationAction::RegisterIdentity
-                    | OperationAction::Adopt
-                    | OperationAction::ConfirmBaseline
-            ) {
-                return self.metadata(&r, result).await;
-            }
-            let record = match self.prepare(&r).await {
-                Ok(record) => record,
-                Err(error) => {
-                    result.error = Some(error.failure());
-                    return result;
-                }
-            };
-            let mut pending = PendingOperation {
-                id: r.execution_id.clone(),
-                item_id: r.operation.item_ref.clone(),
-                action: r.operation.action,
-                state: OperationState::Pending,
-                remote_id: record
-                    .reserved_remote_id
-                    .clone()
-                    .or_else(|| r.operation.remote_id.clone()),
-                applied_effect: None,
-                idempotency_key: Some(r.execution_id.0.clone()),
-                recovery: Some(Box::new(record.clone())),
-                recovery_diagnostic: None,
-                created_at: now(),
-                updated_at: now(),
-            };
-            let receipt = self.write(
-                &r,
-                r.expected_revision,
-                PersistedEffect::Pending(pending.clone()),
-            );
-            result.inventory_write = Some(receipt.clone());
-            if receipt.status != WriteStatus::Written {
-                result.error = Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
-                return result;
-            }
-            pending.state = OperationState::Running;
-            let receipt = self.write(&r, receipt.revision, PersistedEffect::Pending(pending));
-            result.inventory_write = Some(receipt.clone());
-            if receipt.status != WriteStatus::Written {
-                result.error = Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
-                return result;
-            }
-            let journal = Journal::new(
-                self.inventory.clone(),
-                r.clone(),
-                receipt.revision.unwrap(),
-                record,
-            );
-            let effect = self
-                .remote
-                .execute(&self.config, &r, &self.filesystem, Some(&journal))
-                .await;
-            let (persisted, status) = match effect {
-                Ok(effect) => {
-                    result.effect = Some(effect.clone());
-                    (
-                        PersistedEffect::OperationApplied(effect.clone()),
-                        if effect.verified {
-                            OperationResultStatus::Succeeded
-                        } else {
-                            OperationResultStatus::Unconfirmed
-                        },
-                    )
-                }
-                Err(error) => {
-                    result.error = Some(error.failure());
-                    if error.effect == ExecutionEffect::NotApplied {
-                        (
-                            PersistedEffect::OperationFailed,
-                            OperationResultStatus::Failed,
-                        )
-                    } else {
-                        let effect = AppliedEffect {
-                            local: None,
-                            remote: None,
-                            remote_id: r.operation.remote_id.clone(),
-                            verified: false,
-                        };
-                        result.effect = Some(effect.clone());
-                        (
-                            PersistedEffect::OperationApplied(effect),
-                            OperationResultStatus::Unconfirmed,
-                        )
-                    }
-                }
-            };
-            let mut recorded = r.clone();
-            if let Some(effect) = result.effect.as_ref().filter(|effect| effect.verified) {
-                if let Some(local) = &effect.local {
-                    if matches!(local.identity, Evidence::Known(_)) {
-                        recorded.identity.local_identity = local.identity.clone();
-                    }
-                }
-            }
-            // Replacement can change the inode; subsequent confirmation must not restore the
-            // pre-execution identity over the verified effect's identity.
-            let mut receipt = self.write(&recorded, journal.revision(), persisted);
-            if receipt.status == WriteStatus::Written && status == OperationResultStatus::Succeeded
-            {
-                let confirmed = match result.effect.as_ref().and_then(|e| self.convergence(e)) {
-                    Some((baseline, parent)) => {
-                        PersistedEffect::BaselineConfirmed { baseline, parent }
-                    }
-                    None => PersistedEffect::OperationConfirmed,
-                };
-                receipt = self.write(&recorded, receipt.revision, confirmed);
-            }
-            result.status = if receipt.status == WriteStatus::Written {
-                status
+            let same_scope = r.identity.account_id == self.config.account_id
+                && r.identity.sync_root_id == self.config.sync_root_id
+                && r.identity.item_id.as_ref() == Some(&r.operation.item_ref);
+            let mut span = if same_scope {
+                Span::execution(
+                    &self.config,
+                    Kind::Execute(r.operation.action),
+                    Some(&r.execution_id),
+                    Some(&r.operation.item_ref),
+                    Phase::Receive,
+                )
             } else {
-                OperationResultStatus::Unconfirmed
+                Span::default()
             };
-            if receipt.status != WriteStatus::Written {
-                result.error = Some(
-                    OperatorError::new(OperatorErrorKind::Unavailable)
-                        .uncertain()
-                        .failure(),
-                );
-            }
-            result.inventory_write = Some(receipt);
-            result.completed_at = Some(now());
+            let result = span.within(self.execute_observed(r, &span)).await;
+            span.finish(match result.status {
+                OperationResultStatus::Succeeded => Outcome::Complete,
+                OperationResultStatus::Failed => Outcome::Failed,
+                OperationResultStatus::Unconfirmed => Outcome::Unconfirmed,
+                OperationResultStatus::Skipped => Outcome::Skipped,
+            });
             result
         })
     }
 }
+
+impl PersistingOperator {
+    async fn execute_observed(&self, r: ExecuteOperationRequest, span: &Span) -> OperationResult {
+        span.phase(Phase::Acquire, State::Waiting(Wait::OperatorGate));
+        let _guard = self.gate.lock().await;
+        let mut result = OperationResult {
+            operation_id: r.execution_id.clone(),
+            item_id: r.operation.item_ref.clone(),
+            action: r.operation.action,
+            status: OperationResultStatus::Skipped,
+            effect: None,
+            completed_at: None,
+            error: None,
+            inventory_write: None,
+        };
+        span.phase(Phase::Acquire, State::Waiting(Wait::Inventory));
+        let _lease = match self.inventory.execution_lease() {
+            Ok(lease) => lease,
+            Err(_) => {
+                result.error = Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
+                return result;
+            }
+        };
+        span.phase(Phase::Validate, State::Running);
+        if let Err(error) = self.validate(&r) {
+            result.error = Some(error.failure());
+            return result;
+        }
+        if matches!(
+            r.operation.action,
+            OperationAction::RegisterIdentity
+                | OperationAction::Adopt
+                | OperationAction::ConfirmBaseline
+        ) {
+            span.phase(Phase::VerifyEffect, State::Running);
+            return self.metadata(&r, result, span).await;
+        }
+        span.phase(Phase::Prepare, State::Running);
+        let record = match self.prepare(&r).await {
+            Ok(record) => record,
+            Err(error) => {
+                result.error = Some(error.failure());
+                return result;
+            }
+        };
+        let mut pending = PendingOperation {
+            id: r.execution_id.clone(),
+            item_id: r.operation.item_ref.clone(),
+            action: r.operation.action,
+            state: OperationState::Pending,
+            remote_id: record
+                .reserved_remote_id
+                .clone()
+                .or_else(|| r.operation.remote_id.clone()),
+            applied_effect: None,
+            idempotency_key: Some(r.execution_id.0.clone()),
+            recovery: Some(Box::new(record.clone())),
+            recovery_diagnostic: None,
+            created_at: now(),
+            updated_at: now(),
+        };
+        span.phase(Phase::RecordIntent, State::Running);
+        let receipt = self.write(
+            &r,
+            r.expected_revision,
+            PersistedEffect::Pending(pending.clone()),
+        );
+        result.inventory_write = Some(receipt.clone());
+        if receipt.status != WriteStatus::Written {
+            result.error = Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
+            return result;
+        }
+        pending.state = OperationState::Running;
+        let receipt = self.write(&r, receipt.revision, PersistedEffect::Pending(pending));
+        result.inventory_write = Some(receipt.clone());
+        if receipt.status != WriteStatus::Written {
+            result.error = Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
+            return result;
+        }
+        let journal = Journal::new(
+            self.inventory.clone(),
+            r.clone(),
+            receipt.revision.unwrap(),
+            record,
+        );
+        span.phase(Phase::Dispatch, State::Running);
+        span.effect(Effect::Uncertain, false);
+        let effect = self
+            .remote
+            .execute(&self.config, &r, &self.filesystem, Some(&journal))
+            .await;
+        let (persisted, status, observed) = match effect {
+            Ok(effect) => {
+                result.effect = Some(effect.clone());
+                (
+                    PersistedEffect::OperationApplied(effect.clone()),
+                    if effect.verified {
+                        OperationResultStatus::Succeeded
+                    } else {
+                        OperationResultStatus::Unconfirmed
+                    },
+                    if effect.verified {
+                        Effect::Verified
+                    } else {
+                        Effect::Applied
+                    },
+                )
+            }
+            Err(error) => {
+                result.error = Some(error.failure());
+                if error.effect == ExecutionEffect::NotApplied {
+                    (
+                        PersistedEffect::OperationFailed,
+                        OperationResultStatus::Failed,
+                        Effect::NotApplied,
+                    )
+                } else {
+                    let effect = AppliedEffect {
+                        local: None,
+                        remote: None,
+                        remote_id: r.operation.remote_id.clone(),
+                        verified: false,
+                    };
+                    result.effect = Some(effect.clone());
+                    (
+                        PersistedEffect::OperationApplied(effect),
+                        OperationResultStatus::Unconfirmed,
+                        Effect::Uncertain,
+                    )
+                }
+            }
+        };
+        span.effect(observed, false);
+        let mut recorded = r.clone();
+        if let Some(effect) = result.effect.as_ref().filter(|effect| effect.verified) {
+            if let Some(local) = &effect.local {
+                if matches!(local.identity, Evidence::Known(_)) {
+                    recorded.identity.local_identity = local.identity.clone();
+                }
+            }
+        }
+        // Replacement can change the inode; subsequent confirmation must not restore the
+        // pre-execution identity over the verified effect's identity.
+        span.phase(Phase::PersistEffect, State::Running);
+        let mut receipt = self.write(&recorded, journal.revision(), persisted);
+        span.effect(
+            observed,
+            observed != Effect::NotApplied && receipt.status == WriteStatus::Written,
+        );
+        if receipt.status == WriteStatus::Written && status == OperationResultStatus::Succeeded {
+            span.phase(Phase::Confirm, State::Running);
+            let confirmed = match result.effect.as_ref().and_then(|e| self.convergence(e)) {
+                Some((baseline, parent)) => PersistedEffect::BaselineConfirmed { baseline, parent },
+                None => PersistedEffect::OperationConfirmed,
+            };
+            receipt = self.write(&recorded, receipt.revision, confirmed);
+        }
+        result.status = if receipt.status == WriteStatus::Written {
+            status
+        } else {
+            OperationResultStatus::Unconfirmed
+        };
+        if receipt.status != WriteStatus::Written {
+            result.error = Some(
+                OperatorError::new(OperatorErrorKind::Unavailable)
+                    .uncertain()
+                    .failure(),
+            );
+        }
+        span.receipt(receipt.status);
+        result.inventory_write = Some(receipt);
+        result.completed_at = Some(now());
+        result
+    }
+}
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(super) async fn test_response(
+    request: &ExecuteOperationRequest,
+    work: impl std::future::Future<Output = ()>,
+) {
+    activity::test_response(request, work).await;
+}

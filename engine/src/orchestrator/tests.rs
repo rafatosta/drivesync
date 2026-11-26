@@ -40,8 +40,11 @@ impl Operator for MockOperator {
                 panic!("isolated executor panic");
             }
             if let Some(pause) = &self.pause {
-                pause.started.notify_one();
-                pause.release.notified().await;
+                operations::test_response(&r, async {
+                    pause.started.notify_one();
+                    pause.release.notified().await;
+                })
+                .await;
             }
             let mut remote = r.remote.clone();
             let mut local = r.local.clone();
@@ -152,6 +155,7 @@ fn direct(operator: Box<dyn Operator>) -> (Orchestrator, watch::Sender<bool>) {
     let (stop, rx) = watch::channel(false);
     (
         Orchestrator {
+            operation_activities: super::OperationsInbox::disabled(),
             _writer: None,
             capture_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             local_refresh: Arc::new(Notify::new()),
@@ -954,6 +958,15 @@ async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage()
     pause.started.notified().await;
     let paused = handle.status();
     let operation = paused.current_operation.unwrap().id;
+    let active = handle.operation_activity();
+    assert_eq!(active.len(), 2);
+    assert_eq!(active[1].parent, Some(active[0].id));
+    assert_eq!(active[1].execution.id.as_ref().unwrap().0, operation);
+    assert_eq!(active[1].phase, operations::OperationPhase::Upload);
+    assert_eq!(
+        active[1].state,
+        operations::OperationActivityState::Waiting(operations::OperationWait::Response)
+    );
     let analysis = paused.work.analysis.unwrap();
     let mut subscription = handle.subscribe();
     subscription.current();
@@ -994,6 +1007,7 @@ async fn detector_telemetry_bypasses_a_busy_operator_without_granting_coverage()
     let stopped = handle.stop().await;
     assert_eq!(stopped.work, SynchronizationWork::default());
     assert!(stopped.pending.is_none());
+    assert!(handle.operation_activity().is_empty());
     remote.test_progress(Some("late".into()), 1, 0);
     assert_eq!(handle.status().work, SynchronizationWork::default());
 }

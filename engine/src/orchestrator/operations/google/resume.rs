@@ -38,7 +38,12 @@ impl GoogleOperator {
             session_uri: transfer.session_uri.clone(),
             total_bytes: Some(transfer.total_bytes),
         };
-        let progress = match self.client.query_upload_progress(session, &upload).await {
+        let progress = match activity::request(
+            Phase::Resume,
+            self.client.query_upload_progress(session, &upload),
+        )
+        .await
+        {
             Ok(progress) => progress,
             Err(error) => {
                 return unknown(if error.kind == GoogleApiError::ExpiredUploadSession {
@@ -50,7 +55,8 @@ impl GoogleOperator {
         };
         let offset = match progress {
             GoogleUploadProgress::Complete { .. } => {
-                return self.probe_recovery(config, record, fs, session).await
+                report_resume(transfer.total_bytes, transfer.total_bytes);
+                return self.probe_recovery(config, record, fs, session).await;
             }
             GoogleUploadProgress::Incomplete {
                 received_range: None,
@@ -72,6 +78,7 @@ impl GoogleOperator {
         {
             return unknown(RecoveryIssue::TransferIncomplete);
         }
+        report_resume(offset, transfer.total_bytes);
         if fs.validate_root().is_err()
             || fs.root_identity().ok().as_ref() != Some(&record.root_identity)
             || record
@@ -139,8 +146,23 @@ impl GoogleOperator {
             {
                 return assessment;
             }
+            let mut retry = Span::start(Phase::VerifyEffect, State::Waiting(Wait::Retry));
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            retry.finish(Outcome::Complete);
         }
         unreachable!()
     }
+}
+
+fn report_resume(offset: u64, total: u64) {
+    let mut span = Span::start(Phase::Resume, State::Running);
+    span.progress(
+        Progress::Bytes(Bytes {
+            confirmed: Some(offset),
+            total: Some(total),
+            ..Bytes::default()
+        }),
+        true,
+    );
+    span.finish(Outcome::Complete);
 }

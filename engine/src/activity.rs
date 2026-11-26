@@ -50,6 +50,21 @@ impl ActivityReporter {
         immediate: bool,
         value: impl FnOnce() -> T,
     ) -> Option<Sample<T>> {
+        self.next(immediate, true, value)
+    }
+
+    /// A mandatory wait transition does not postpone the next sampled progress update.
+    pub(crate) fn transition<T>(&self, value: T) -> Sample<T> {
+        self.next(true, false, || value)
+            .expect("transitions are never sampled out")
+    }
+
+    fn next<T>(
+        &self,
+        immediate: bool,
+        reset_progress_interval: bool,
+        value: impl FnOnce() -> T,
+    ) -> Option<Sample<T>> {
         let (sequence, at, coalesced) = {
             let mut sampling = self.0.lock().unwrap();
             let at = Instant::now();
@@ -57,7 +72,9 @@ impl ActivityReporter {
                 sampling.coalesced += 1;
                 return None;
             }
-            sampling.last = Some(at);
+            if reset_progress_interval {
+                sampling.last = Some(at);
+            }
             sampling.sequence += 1;
             (
                 sampling.sequence,
@@ -107,6 +124,10 @@ impl<T> Recent<T> {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
     }
 
     pub(crate) fn take(&mut self) -> Vec<T> {

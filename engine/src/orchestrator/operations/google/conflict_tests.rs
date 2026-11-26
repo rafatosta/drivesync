@@ -97,9 +97,26 @@ async fn lost_conflict_replacement_receipt_preserves_both_versions_and_recovers_
     });
     assert_eq!(write.status, WriteStatus::Written);
     r.expected_revision = write.revision;
+    let inbox = activity::ActivityInbox::for_config(&executor.config);
     assert_eq!(
-        executor.execute(r).await.status,
+        inbox.observe(executor.execute(r)).await.status,
         OperationResultStatus::Unconfirmed
+    );
+    let records = inbox.take_updates();
+    for size in [5, 6] {
+        assert!(records.iter().any(|record| record.phase == Phase::ArchiveConflict
+            && record.state == State::Finished(Outcome::Complete)
+            && matches!(record.progress, Some(Progress::Bytes(bytes)) if bytes.written == Some(size))));
+    }
+    assert!(records
+        .iter()
+        .any(|record| record.phase == Phase::VerifyArchive
+            && record.state == State::Finished(Outcome::Complete)));
+    assert!(records.iter().any(|record| record.phase == Phase::Upload
+        && record.state == State::Finished(Outcome::Complete)));
+    assert_eq!(
+        records.last().unwrap().state,
+        State::Finished(Outcome::Unconfirmed)
     );
     assert!(uploaded.load(Ordering::SeqCst));
     let archive = executor

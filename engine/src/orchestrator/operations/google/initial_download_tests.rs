@@ -149,6 +149,7 @@ async fn assert_initial_download(
     ));
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let mut worker = Orchestrator {
+        operation_activities: crate::orchestrator::OperationsInbox::disabled(),
         _writer: None,
         capture_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         local_refresh: Arc::new(tokio::sync::Notify::new()),
@@ -374,14 +375,30 @@ async fn full_storage_error_stops_verified_media_before_any_publication() {
         .write(true)
         .open("/dev/full")
         .unwrap();
-    let result = receive_verified(
-        &mut stream.body,
-        &mut full,
-        16,
-        &format!("{:x}", Sha256::digest(b"downloaded bytes")),
-    )
-    .await;
+    let sandbox = Sandbox::new();
+    let executor = setup(&sandbox);
+    let request = super::super::tests::request(&executor, OperationAction::Download);
+    let inbox = activity::ActivityInbox::for_config(&executor.config);
+    let digest = format!("{:x}", Sha256::digest(b"downloaded bytes"));
+    let result = inbox
+        .test_execute(
+            &executor.config,
+            &request,
+            receive_verified(&mut stream.body, &mut full, 16, &digest),
+        )
+        .await;
     assert_eq!(result.unwrap_err().code, OperatorErrorKind::Unavailable);
+    let records = inbox.take_updates();
+    assert!(records
+        .iter()
+        .any(|r| r.phase == Phase::WriteLocal && r.state == State::Finished(Outcome::Failed)));
+    let received = records
+        .iter()
+        .find(|r| r.phase == Phase::Download && r.state == State::Finished(Outcome::Cancelled))
+        .unwrap();
+    assert!(
+        matches!(received.progress, Some(Progress::Bytes(bytes)) if bytes.received == Some(16) && bytes.written == Some(0))
+    );
 }
 
 #[tokio::test]

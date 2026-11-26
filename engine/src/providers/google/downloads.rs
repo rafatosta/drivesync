@@ -80,6 +80,14 @@ pub struct GoogleDownloadStream {
     pub etag: Option<String>,
     pub mime_type: Option<MimeType>,
 }
+/// Observes evidence already produced by a digest fallback, without exposing media or IDs.
+pub(crate) enum ContentVerification {
+    Request(u64),
+    Chunk(usize),
+    Received,
+    Revalidate,
+}
+
 impl GoogleDriveClient {
     /// Recover SHA-256 evidence for a binary revision that only exposes an MD5.
     /// MD5 checks transport integrity while SHA-256 remains the replica identity evidence.
@@ -88,6 +96,17 @@ impl GoogleDriveClient {
         session: &GoogleSession,
         file: &mut GoogleFile,
         cached_sha256: Option<&str>,
+    ) -> GoogleResult<()> {
+        self.fill_content_sha256_observed(session, file, cached_sha256, |_| {})
+            .await
+    }
+
+    pub(crate) async fn fill_content_sha256_observed(
+        &self,
+        session: &GoogleSession,
+        file: &mut GoogleFile,
+        cached_sha256: Option<&str>,
+        mut observe: impl FnMut(ContentVerification) + Send,
     ) -> GoogleResult<()> {
         let (Some(id), Some(_version), Some(expected), Some(size)) = (
             file.id.as_ref(),
@@ -122,6 +141,7 @@ impl GoogleDriveClient {
         }
 
         let _sample = crate::performance::Sample::begin("google_sha256_media_and_verification");
+        observe(ContentVerification::Request(size));
         let mut media = self.get_file_bytes(session, id, None).await?;
         let mut received = 0u64;
         let mut md5 = Md5::new();
@@ -134,10 +154,13 @@ impl GoogleDriveClient {
                 .ok_or_else(incomplete)?;
             md5.update(&bytes);
             sha256.update(&bytes);
+            observe(ContentVerification::Chunk(bytes.len()));
         }
+        observe(ContentVerification::Received);
         if received != size || !format!("{:x}", md5.finalize()).eq_ignore_ascii_case(expected) {
             return Err(incomplete());
         }
+        observe(ContentVerification::Revalidate);
         let after = self
             .files_get(
                 session,

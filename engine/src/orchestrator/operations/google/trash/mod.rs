@@ -49,9 +49,8 @@ impl GoogleOperator {
         id: &RemoteId,
     ) -> Result<(), OperatorError> {
         let escaped = id.0.replace('\\', "\\\\").replace('\'', "\\'");
-        let children = self
-            .client
-            .files_list(
+        let children = activity::page(
+            self.client.files_list(
                 session,
                 FileListOptions {
                     q: Some(format!("'{escaped}' in parents")),
@@ -61,9 +60,11 @@ impl GoogleOperator {
                     include_items_from_all_drives: Some(true),
                     ..Default::default()
                 },
-            )
-            .await
-            .map_err(read_error)?;
+            ),
+            |page| page.files.len(),
+        )
+        .await
+        .map_err(read_error)?;
         if children.incomplete_search != Some(false)
             || children.next_page_token.is_some()
             || !children.files.is_empty()

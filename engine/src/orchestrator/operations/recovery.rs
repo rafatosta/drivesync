@@ -168,12 +168,17 @@ impl PersistingOperator {
     async fn recover_all(
         &self,
         checking: interfaces::RecoveryObserver<'_>,
+        span: &Span,
     ) -> Result<Vec<RecoveryResult>, OperatorError> {
+        use activity::{Progress, Unit};
+        span.phase(Phase::Acquire, State::Waiting(Wait::OperatorGate));
         let _guard = self.gate.lock().await;
+        span.phase(Phase::Acquire, State::Waiting(Wait::Inventory));
         let _lease = self
             .inventory
             .execution_lease()
             .map_err(|_| OperatorError::new(OperatorErrorKind::Unavailable))?;
+        span.phase(Phase::ReadRecovery, State::Waiting(Wait::Inventory));
         let snapshots = self
             .inventory
             .enumerate(InventoryScopeQuery {
@@ -181,16 +186,40 @@ impl PersistingOperator {
                 sync_root_id: self.config.sync_root_id.clone(),
             })
             .map_err(|_| OperatorError::new(OperatorErrorKind::Unavailable))?;
+        span.progress(
+            Progress::Count {
+                unit: Unit::Items,
+                completed: snapshots.len() as u64,
+                total: Some(snapshots.len() as u64),
+            },
+            true,
+        );
+        span.phase(Phase::Reconcile, State::Running);
+        let total = span.enabled().then(|| {
+            snapshots
+                .iter()
+                .flat_map(|snapshot| &snapshot.pending_operations)
+                .filter(|entry| recoverable(entry.state))
+                .count() as u64
+        });
+        let mut inspected = 0;
         let mut results = Vec::new();
         for mut snapshot in snapshots {
-            for pending in snapshot.pending_operations.clone().into_iter().filter(|p| {
-                matches!(
-                    p.state,
-                    OperationState::Pending
-                        | OperationState::Running
-                        | OperationState::AppliedUnconfirmed
-                )
-            }) {
+            for pending in snapshot
+                .pending_operations
+                .clone()
+                .into_iter()
+                .filter(|p| recoverable(p.state))
+            {
+                inspected += 1;
+                span.progress(
+                    Progress::Count {
+                        unit: Unit::RecoveryRecords,
+                        completed: inspected,
+                        total,
+                    },
+                    false,
+                );
                 let item = SynchronizationItem {
                     item_id: snapshot.identity.item_id.clone(),
                     local_path: snapshot.local_path.clone().or_else(|| {
@@ -217,125 +246,36 @@ impl PersistingOperator {
                 {
                     continue;
                 }
+                let mut attempt = Span::execution(
+                    &self.config,
+                    Kind::RecoverItem(pending.action),
+                    Some(&pending.id),
+                    Some(&pending.item_id),
+                    Phase::Validate,
+                );
+                // The observer carries the existing public item projection only.
                 checking(item.clone());
-                let mut revision = Some(snapshot.revision);
-                let mut assessment = match pending.recovery.as_ref() {
-                    None => RecoveryAssessment::unknown(RecoveryIssue::MissingCommand),
-                    Some(record)
-                        if record.execution_id != pending.id
-                            || record.command.action != pending.action
-                            || record.command.item_ref != pending.item_id
-                            || snapshot.identity.item_id.as_ref() != Some(&pending.item_id) =>
-                    {
-                        RecoveryAssessment::unknown(RecoveryIssue::ScopeMismatch)
+                let outcome = attempt
+                    .within(self.recover_item(&snapshot, &pending, &attempt))
+                    .await;
+                let (assessment, receipt) = match outcome {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        attempt.finish(Outcome::Failed);
+                        return Err(error);
                     }
-                    Some(record) => match self.validate_recovery(record) {
-                        Err(issue) => RecoveryAssessment::unknown(issue),
-                        Ok(()) if pending.state == OperationState::Pending => RecoveryAssessment {
-                            outcome: ExecutionEffect::NotApplied,
-                            issue: Some(RecoveryIssue::NotDispatched),
-                            effect: None,
-                        },
-                        Ok(()) => {
-                            self.remote
-                                .reconcile(&self.config, record, &self.filesystem)
-                                .await
-                        }
-                    },
                 };
-                if assessment.issue == Some(RecoveryIssue::TransferIncomplete)
-                    && (pending.state == OperationState::Running
-                        || (pending.state == OperationState::AppliedUnconfirmed
-                            && !pending
-                                .applied_effect
-                                .as_ref()
-                                .is_some_and(|effect| effect.verified)))
-                {
-                    if let Some(record) = pending
-                        .recovery
-                        .as_ref()
-                        .filter(|r| r.command.action == OperationAction::Upload)
-                    {
-                        let parent = match &record.local.parent {
-                            Evidence::Known(parent) => self.confirmed_parent(
-                                parent,
-                                &record.command.parent_id.iter().cloned().collect::<Vec<_>>(),
-                            ),
-                            _ => None,
-                        };
-                        if parent.is_some() {
-                            let request = ExecuteOperationRequest {
-                                operation: record.command.clone(),
-                                execution_id: record.execution_id.clone(),
-                                expected_revision: Some(snapshot.revision),
-                                identity: record.identity.clone(),
-                                local: record.local.clone(),
-                                remote: record.remote.clone(),
-                                completed_steps: record.completed_steps.clone(),
-                            };
-                            let journal = Journal::new(
-                                self.inventory.clone(),
-                                request,
-                                snapshot.revision,
-                                (**record).clone(),
-                            );
-                            assessment = self
-                                .remote
-                                .resume_upload(&self.config, record, &self.filesystem, &journal)
-                                .await;
-                            revision = journal.revision();
-                        } else {
-                            assessment = RecoveryAssessment::unknown(RecoveryIssue::ParentChanged);
-                        }
-                    }
-                }
-                if assessment.outcome != ExecutionEffect::Unknown {
-                    if let Some(record) = &pending.recovery {
-                        if let Err(issue) = self.validate_recovery(record) {
-                            assessment = RecoveryAssessment::unknown(issue);
-                        }
-                    }
-                }
-                let mut identity = snapshot.identity.clone();
-                if let Some(effect) = &assessment.effect {
-                    if let Some(local) = &effect.local {
-                        identity.local_identity = local.identity.clone();
-                    }
-                    if effect.remote_id.is_some() {
-                        identity.remote_id = effect.remote_id.clone();
-                    }
-                }
-                let mut receipt = self.inventory.write(InventoryWrite {
-                    operation_id: pending.id.clone(),
-                    item_id: pending.item_id.clone(),
-                    identity: identity.clone(),
-                    expected_revision: revision,
-                    effect: PersistedEffect::RecoveryObserved {
-                        outcome: assessment.outcome,
-                        issue: assessment.issue,
-                        effect: assessment.effect.clone().map(Box::new),
-                    },
-                    recorded_at: now(),
+                attempt.finish(if receipt.status != WriteStatus::Written {
+                    Outcome::Inconclusive(RecoveryIssue::InventoryConflict)
+                } else if assessment.outcome == ExecutionEffect::Unknown {
+                    Outcome::Inconclusive(
+                        assessment
+                            .issue
+                            .unwrap_or(RecoveryIssue::RemoteInconclusive),
+                    )
+                } else {
+                    Outcome::Complete
                 });
-                if receipt.status == WriteStatus::Written
-                    && assessment.outcome == ExecutionEffect::Applied
-                {
-                    let effect = assessment.effect.as_ref().ok_or_else(filesystem::stale)?;
-                    let confirmed = match self.convergence(effect) {
-                        Some((baseline, parent)) => {
-                            PersistedEffect::BaselineConfirmed { baseline, parent }
-                        }
-                        None => PersistedEffect::OperationConfirmed,
-                    };
-                    receipt = self.inventory.write(InventoryWrite {
-                        operation_id: pending.id.clone(),
-                        item_id: pending.item_id.clone(),
-                        identity,
-                        expected_revision: receipt.revision,
-                        effect: confirmed,
-                        recorded_at: now(),
-                    });
-                }
                 let changed = receipt.status == WriteStatus::Written;
                 if let Some(revision) = receipt.revision {
                     snapshot.revision = revision;
@@ -357,8 +297,174 @@ impl PersistingOperator {
                 }
             }
         }
+        span.progress(
+            Progress::Count {
+                unit: Unit::RecoveryRecords,
+                completed: inspected,
+                total,
+            },
+            true,
+        );
         Ok(results)
     }
+
+    async fn recover_item(
+        &self,
+        snapshot: &InventorySnapshot,
+        pending: &PendingOperation,
+        attempt: &Span,
+    ) -> Result<(RecoveryAssessment, InventoryWriteResult), OperatorError> {
+        let mut revision = Some(snapshot.revision);
+        let mut assessment = match pending.recovery.as_ref() {
+            None => RecoveryAssessment::unknown(RecoveryIssue::MissingCommand),
+            Some(record)
+                if record.execution_id != pending.id
+                    || record.command.action != pending.action
+                    || record.command.item_ref != pending.item_id
+                    || snapshot.identity.item_id.as_ref() != Some(&pending.item_id) =>
+            {
+                RecoveryAssessment::unknown(RecoveryIssue::ScopeMismatch)
+            }
+            Some(record) => match self.validate_recovery(record) {
+                Err(issue) => RecoveryAssessment::unknown(issue),
+                Ok(()) if pending.state == OperationState::Pending => RecoveryAssessment {
+                    outcome: ExecutionEffect::NotApplied,
+                    issue: Some(RecoveryIssue::NotDispatched),
+                    effect: None,
+                },
+                Ok(()) => {
+                    attempt.phase(Phase::Reconcile, State::Running);
+                    self.remote
+                        .reconcile(&self.config, record, &self.filesystem)
+                        .await
+                }
+            },
+        };
+        if assessment.issue == Some(RecoveryIssue::TransferIncomplete)
+            && (pending.state == OperationState::Running
+                || (pending.state == OperationState::AppliedUnconfirmed
+                    && !pending
+                        .applied_effect
+                        .as_ref()
+                        .is_some_and(|effect| effect.verified)))
+        {
+            if let Some(record) = pending
+                .recovery
+                .as_ref()
+                .filter(|r| r.command.action == OperationAction::Upload)
+            {
+                let parent = match &record.local.parent {
+                    Evidence::Known(parent) => self.confirmed_parent(
+                        parent,
+                        &record.command.parent_id.iter().cloned().collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                };
+                if parent.is_some() {
+                    let request = ExecuteOperationRequest {
+                        operation: record.command.clone(),
+                        execution_id: record.execution_id.clone(),
+                        expected_revision: Some(snapshot.revision),
+                        identity: record.identity.clone(),
+                        local: record.local.clone(),
+                        remote: record.remote.clone(),
+                        completed_steps: record.completed_steps.clone(),
+                    };
+                    let journal = Journal::new(
+                        self.inventory.clone(),
+                        request,
+                        snapshot.revision,
+                        (**record).clone(),
+                    );
+                    attempt.phase(Phase::Resume, State::Running);
+                    assessment = self
+                        .remote
+                        .resume_upload(&self.config, record, &self.filesystem, &journal)
+                        .await;
+                    revision = journal.revision();
+                } else {
+                    assessment = RecoveryAssessment::unknown(RecoveryIssue::ParentChanged);
+                }
+            }
+        }
+        if assessment.outcome != ExecutionEffect::Unknown {
+            if let Some(record) = &pending.recovery {
+                if let Err(issue) = self.validate_recovery(record) {
+                    assessment = RecoveryAssessment::unknown(issue);
+                }
+            }
+        }
+        let mut identity = snapshot.identity.clone();
+        if let Some(effect) = &assessment.effect {
+            if let Some(local) = &effect.local {
+                identity.local_identity = local.identity.clone();
+            }
+            if effect.remote_id.is_some() {
+                identity.remote_id = effect.remote_id.clone();
+            }
+        }
+        let observed = match assessment.outcome {
+            ExecutionEffect::NotApplied => Effect::NotApplied,
+            ExecutionEffect::Applied
+                if assessment
+                    .effect
+                    .as_ref()
+                    .is_some_and(|effect| effect.verified) =>
+            {
+                Effect::Verified
+            }
+            ExecutionEffect::Applied => Effect::Applied,
+            ExecutionEffect::Unknown => Effect::Uncertain,
+        };
+        attempt.effect(observed, false);
+        attempt.phase(Phase::PersistEffect, State::Running);
+        let mut receipt = activity::persist(Phase::PersistEffect, || {
+            self.inventory.write(InventoryWrite {
+                operation_id: pending.id.clone(),
+                item_id: pending.item_id.clone(),
+                identity: identity.clone(),
+                expected_revision: revision,
+                effect: PersistedEffect::RecoveryObserved {
+                    outcome: assessment.outcome,
+                    issue: assessment.issue,
+                    effect: assessment.effect.clone().map(Box::new),
+                },
+                recorded_at: now(),
+            })
+        });
+        attempt.effect(
+            observed,
+            observed != Effect::NotApplied && receipt.status == WriteStatus::Written,
+        );
+        if receipt.status == WriteStatus::Written && assessment.outcome == ExecutionEffect::Applied
+        {
+            attempt.phase(Phase::Confirm, State::Running);
+            let effect = assessment.effect.as_ref().ok_or_else(filesystem::stale)?;
+            let confirmed = match self.convergence(effect) {
+                Some((baseline, parent)) => PersistedEffect::BaselineConfirmed { baseline, parent },
+                None => PersistedEffect::OperationConfirmed,
+            };
+            receipt = activity::persist(Phase::Confirm, || {
+                self.inventory.write(InventoryWrite {
+                    operation_id: pending.id.clone(),
+                    item_id: pending.item_id.clone(),
+                    identity,
+                    expected_revision: receipt.revision,
+                    effect: confirmed,
+                    recorded_at: now(),
+                })
+            });
+        }
+        attempt.receipt(receipt.status);
+        Ok((assessment, receipt))
+    }
+}
+
+fn recoverable(state: OperationState) -> bool {
+    matches!(
+        state,
+        OperationState::Pending | OperationState::Running | OperationState::AppliedUnconfirmed
+    )
 }
 impl PersistingOperator {
     pub(super) fn recover_future<'a>(
@@ -371,6 +477,11 @@ impl PersistingOperator {
                 + 'a,
         >,
     > {
-        Box::pin(self.recover_all(checking))
+        Box::pin(async move {
+            let mut span = Span::execution(&self.config, Kind::Recover, None, None, Phase::Receive);
+            let result = span.within(self.recover_all(checking, &span)).await;
+            span.result(&result);
+            result
+        })
     }
 }

@@ -8,6 +8,8 @@ pub(super) type EffectFuture<'a> =
 /// Executes one authorized operation and persists its real result.
 pub(crate) type RecoveryFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Vec<RecoveryResult>, OperatorError>> + Send + 'a>>;
+/// Projects the item into the existing public recovery status. Operations publishes technical
+/// recovery activity through its scoped inbox; this callback only supplies presentation data.
 pub(crate) type RecoveryObserver<'a> =
     &'a (dyn Fn(crate::synchronization::SynchronizationItem) + Send + Sync);
 pub(crate) trait Operator: Send + Sync {
@@ -30,6 +32,9 @@ pub(crate) trait OperatorFactory: Send + Sync {
     fn create(&self, config: OperatorConfig) -> Result<Box<dyn Operator>, OperatorError>;
 }
 /// Provider specialization; local filesystem execution remains owned by Operations.
+///
+/// Implementations report through the private `activity::Span` contract within the calling
+/// execution future. Reporting is optional and has no bearing on dispatch or return values.
 pub(super) trait RemoteExecutor: Send + Sync {
     fn reconcile<'a>(
         &'a self,

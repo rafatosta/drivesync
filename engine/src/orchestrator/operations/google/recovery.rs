@@ -349,7 +349,12 @@ impl GoogleOperator {
                         session_uri: transfer.session_uri.clone(),
                         total_bytes: Some(transfer.total_bytes),
                     };
-                    match self.client.query_upload_progress(session, &upload).await {
+                    match activity::request(
+                        Phase::Resume,
+                        self.client.query_upload_progress(session, &upload),
+                    )
+                    .await
+                    {
                         Ok(GoogleUploadProgress::Incomplete { .. }) => {
                             return RecoveryAssessment::unknown(RecoveryIssue::TransferIncomplete)
                         }

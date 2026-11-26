@@ -286,70 +286,86 @@ impl Filesystem {
         &self,
         expected: &LocalState,
     ) -> Result<(), OperatorError> {
-        if !matches!(&expected.identity,Evidence::Known(id) if id.birth_ns.is_some()) {
-            return Err(stale());
-        }
-        let data = data_home()?;
-        let files_path = data.join("Trash/files");
-        let trash = Filesystem::open(&files_path)?;
-        let info = Filesystem::open(&data.join("Trash/info"))?;
-        let original = self
-            .absolute
-            .join(expected.path.as_ref().ok_or_else(stale)?);
-        let encoded: String = original
-            .as_os_str()
-            .as_bytes()
-            .iter()
-            .map(|b| {
-                if b.is_ascii_alphanumeric() || b"/-_.~".contains(b) {
-                    (*b as char).to_string()
-                } else {
-                    format!("%{b:02X}")
+        let mut span = Span::start(Phase::Trash, State::Waiting(Wait::LocalIo));
+        let mut checked = 0;
+        let result = span.within_sync(|| {
+            if !matches!(&expected.identity,Evidence::Known(id) if id.birth_ns.is_some()) {
+                return Err(stale());
+            }
+            let data = data_home()?;
+            let files_path = data.join("Trash/files");
+            let trash = Filesystem::open(&files_path)?;
+            let info = Filesystem::open(&data.join("Trash/info"))?;
+            let original = self
+                .absolute
+                .join(expected.path.as_ref().ok_or_else(stale)?);
+            let encoded: String = original
+                .as_os_str()
+                .as_bytes()
+                .iter()
+                .map(|b| {
+                    if b.is_ascii_alphanumeric() || b"/-_.~".contains(b) {
+                        (*b as char).to_string()
+                    } else {
+                        format!("%{b:02X}")
+                    }
+                })
+                .collect();
+            let mut found = false;
+            for (index, entry) in std::fs::read_dir(&files_path).map_err(error)?.enumerate() {
+                if index >= 4096 {
+                    return Err(stale());
                 }
-            })
-            .collect();
-        let mut found = false;
-        for (index, entry) in std::fs::read_dir(&files_path).map_err(error)?.enumerate() {
-            if index >= 4096 {
+                let entry = entry.map_err(error)?;
+                checked += 1;
+                span.progress(Progress::Count { unit: activity::Unit::Items, completed: checked, total: None }, false);
+                let name = entry.file_name();
+                let meta = std::fs::symlink_metadata(entry.path()).map_err(error)?;
+                if !matches!(&expected.identity, Evidence::Known(id) if id.device_id==meta.dev() && id.inode==meta.ino() && id.birth_ns==crate::models::birth_ns(&meta))
+                {
+                    continue;
+                }
+                if meta.is_file() && meta.nlink() != 1 {
+                    return Err(stale());
+                }
+                let observed = trash.observe(StdPath::new(&name))?;
+                if observed.kind == Evidence::Known(FileKind::Directory) {
+                    trash.require_empty(StdPath::new(&name))?;
+                }
+                if !same_retained_content(&observed, expected) {
+                    return Err(stale());
+                }
+                let mut info_name = name;
+                info_name.push(".trashinfo");
+                let mut bytes = Vec::new();
+                info.read(StdPath::new(&info_name))?
+                    .take(65537)
+                    .read_to_end(&mut bytes)
+                    .map_err(error)?;
+                if bytes.len() > 65536
+                    || !std::str::from_utf8(&bytes)
+                        .ok()
+                        .is_some_and(|s| s.lines().any(|l| l == format!("Path={encoded}")))
+                {
+                    return Err(stale());
+                }
+                found = true;
+            }
+            if !found {
                 return Err(stale());
             }
-            let entry = entry.map_err(error)?;
-            let name = entry.file_name();
-            let meta = std::fs::symlink_metadata(entry.path()).map_err(error)?;
-            if !matches!(&expected.identity, Evidence::Known(id) if id.device_id==meta.dev() && id.inode==meta.ino() && id.birth_ns==crate::models::birth_ns(&meta))
-            {
-                continue;
-            }
-            if meta.is_file() && meta.nlink() != 1 {
-                return Err(stale());
-            }
-            let observed = trash.observe(StdPath::new(&name))?;
-            if observed.kind == Evidence::Known(FileKind::Directory) {
-                trash.require_empty(StdPath::new(&name))?;
-            }
-            if !same_retained_content(&observed, expected) {
-                return Err(stale());
-            }
-            let mut info_name = name;
-            info_name.push(".trashinfo");
-            let mut bytes = Vec::new();
-            info.read(StdPath::new(&info_name))?
-                .take(65537)
-                .read_to_end(&mut bytes)
-                .map_err(error)?;
-            if bytes.len() > 65536
-                || !std::str::from_utf8(&bytes)
-                    .ok()
-                    .is_some_and(|s| s.lines().any(|l| l == format!("Path={encoded}")))
-            {
-                return Err(stale());
-            }
-            found = true;
-        }
-        if !found {
-            return Err(stale());
-        }
-        Ok(())
+            Ok(())
+        });
+        span.progress(
+            Progress::Count {
+                unit: activity::Unit::Items,
+                completed: checked,
+                total: None,
+            },
+            true,
+        );
+        span.result(&result);
+        result
     }
     pub(in crate::orchestrator::operations) fn remove_to_trash(
         &self,
@@ -380,30 +396,37 @@ impl Filesystem {
     where
         F: FnOnce(&Entry, &StdPath) -> Result<TrashDestination, OperatorError>,
     {
-        let path = request.local.path.as_ref().ok_or_else(stale)?;
-        let source = self.entry(path)?;
-        self.check(&request.local)?;
-        if request.local.kind == Evidence::Known(FileKind::Regular)
-            && self.read(path)?.metadata().map_err(error)?.nlink() != 1
-        {
-            return Err(stale());
-        }
-        let destination = prepare(&source, &self.absolute.join(path))?;
-        let journal = journal.ok_or_else(stale)?;
-        journal.checkpoint(crate::inventory::models::RecoveryCheckpoint::LocalTrash(
-            destination.reference.clone(),
-        ))?;
-        self.check(&request.local)?;
-        if request.local.kind == Evidence::Known(FileKind::Directory) {
-            self.require_empty(path)?;
-        }
-        destination.commit(&source)?;
-        let mut absent = request.local.clone();
-        absent.state = FileState::Absent;
-        if self.trashed(&journal.record())? != Some(absent.clone()) {
-            return Err(stale().uncertain());
-        }
-        Ok(absent)
+        let mut span = Span::start(Phase::Trash, State::Waiting(Wait::LocalIo));
+        let result = span.within_sync(|| {
+            let path = request.local.path.as_ref().ok_or_else(stale)?;
+            let source = self.entry(path)?;
+            self.check(&request.local)?;
+            if request.local.kind == Evidence::Known(FileKind::Regular)
+                && self.read(path)?.metadata().map_err(error)?.nlink() != 1
+            {
+                return Err(stale());
+            }
+            let destination = prepare(&source, &self.absolute.join(path))?;
+            let journal = journal.ok_or_else(stale)?;
+            journal.checkpoint(crate::inventory::models::RecoveryCheckpoint::LocalTrash(
+                destination.reference.clone(),
+            ))?;
+            self.check(&request.local)?;
+            if request.local.kind == Evidence::Known(FileKind::Directory) {
+                self.require_empty(path)?;
+            }
+            destination.commit(&source)?;
+            span.effect(Effect::Applied, false);
+            span.phase(Phase::VerifyEffect, State::Waiting(Wait::LocalIo));
+            let mut absent = request.local.clone();
+            absent.state = FileState::Absent;
+            if self.trashed(&journal.record())? != Some(absent.clone()) {
+                return Err(stale().uncertain());
+            }
+            Ok(absent)
+        });
+        span.result(&result);
+        result
     }
     pub(in crate::orchestrator::operations) fn require_empty(
         &self,

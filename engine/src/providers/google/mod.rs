@@ -22,6 +22,7 @@ mod uploads;
 
 pub use api::*;
 pub use client::{GoogleClientLimits, GoogleDriveClient};
+pub(crate) use downloads::ContentVerification;
 pub use downloads::{GoogleByteRange, GoogleByteStream, GoogleDownloadStream};
 pub use errors::{GoogleApiError, GoogleApiFailure, GoogleResult};
 pub use models::*;

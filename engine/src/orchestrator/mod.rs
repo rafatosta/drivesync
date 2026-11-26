@@ -21,7 +21,8 @@ use operations::{
         ExecuteOperationRequest, OperationAction, OperationResultStatus, OperatorConfig,
         OperatorErrorKind,
     },
-    Operator, OperatorFactory,
+    Activity as OperationActivity, ActivityInbox as OperationsInbox,
+    ActivityScope as OperationsScope, Operator, OperatorFactory,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -41,6 +42,7 @@ pub(crate) struct OrchestratorHandle {
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
     detector_activities: ActivityInbox,
+    operation_activities: OperationsInbox,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
@@ -80,6 +82,12 @@ impl OrchestratorHandle {
     pub(crate) fn status(&self) -> SynchronizationStatus {
         self.status.borrow().clone()
     }
+    /// Internal diagnostic snapshot, independent of the public status projection.
+    #[allow(dead_code)]
+    fn operation_activity(&self) -> Vec<OperationActivity> {
+        self.operation_activities.current()
+    }
+
     pub(crate) fn subscribe(&self) -> SynchronizationSubscription {
         SynchronizationSubscription {
             receiver: self.status.clone(),
@@ -208,7 +216,12 @@ fn start_guarded(
     let capture_epoch = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let local_refresh = Arc::new(tokio::sync::Notify::new());
     let remote_refresh = Arc::new(tokio::sync::Notify::new());
+    let operation_activities = OperationsInbox::new(OperationsScope {
+        account: config.roots.account_id.clone(),
+        root: config.sync_root_id.clone(),
+    });
     let mut worker = Orchestrator {
+        operation_activities: operation_activities.clone(),
         _writer: writer,
         capture_epoch: capture_epoch.clone(),
         local_refresh: local_refresh.clone(),
@@ -232,6 +245,7 @@ fn start_guarded(
         worker.run(files_rx, ownership).await;
     });
     let activity_inbox = detector_activities.clone();
+    let operations_inbox = operation_activities.clone();
     tokio::spawn(async move {
         let mut task = task;
         let outcome = loop {
@@ -248,8 +262,11 @@ fn start_guarded(
                     }
                     activity_inbox.flush_diagnostics();
                 }
+                _ = operations_inbox.changed() => operations_inbox.consume(),
             }
         };
+        operations_inbox.close();
+        operations_inbox.consume();
         activity_inbox.close();
         activity_inbox.flush_diagnostics();
         if outcome.is_err() {
@@ -272,6 +289,7 @@ fn start_guarded(
         finished: finished_rx,
         status: status_rx,
         detector_activities,
+        operation_activities,
         capture_epoch,
         local_refresh,
         remote_refresh,
@@ -283,6 +301,7 @@ enum Command {
     Capture(Source, Option<u64>),
 }
 struct Orchestrator {
+    operation_activities: OperationsInbox,
     _writer: Option<Arc<dyn Send + Sync>>,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
@@ -385,7 +404,11 @@ impl Orchestrator {
                 None,
             );
         };
-        match self.operator.recover_with(&checking).await {
+        match self
+            .operation_activities
+            .observe(self.operator.recover_with(&checking))
+            .await
+        {
             Ok(results) => {
                 let changed = self.recovery_failed || !results.is_empty();
                 self.recovery_failed = false;
@@ -875,7 +898,12 @@ impl Orchestrator {
             } else {
                 attributes.join(", ")
             };
-            if self.operator.record_conflict(&file, reason).await.is_err() {
+            if self
+                .operation_activities
+                .observe(self.operator.record_conflict(&file, reason))
+                .await
+                .is_err()
+            {
                 self.block(item, issue(SynchronizationIssueKind::OperationFailed, true));
                 self.settle();
                 return outcome;
@@ -1176,8 +1204,8 @@ impl Orchestrator {
             let expected_item = operation.item_ref.clone();
             let expected_action = operation.action;
             let result = self
-                .operator
-                .execute(ExecuteOperationRequest {
+                .operation_activities
+                .observe(self.operator.execute(ExecuteOperationRequest {
                     operation,
                     execution_id,
                     expected_revision: file.inventory_revision,
@@ -1185,7 +1213,7 @@ impl Orchestrator {
                     local: file.local.clone(),
                     remote: file.remote.clone(),
                     completed_steps: completed.clone(),
-                })
+                }))
                 .await;
             let confirmed = result.operation_id == expected_id
                 && result.item_id == expected_item

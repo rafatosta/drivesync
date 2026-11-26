@@ -692,7 +692,18 @@ async fn concurrent_inventory_revision_rejects_recovery_without_losing_the_effec
         OperationResultStatus::Unconfirmed
     );
     race.store(true, Ordering::SeqCst);
-    let result = executor.recover().await.unwrap();
+    let inbox = activity::ActivityInbox::for_config(&executor.config);
+    let result = inbox.observe(executor.recover()).await.unwrap();
+    let activity = inbox.take_updates();
+    assert!(activity
+        .iter()
+        .any(|entry| entry.phase == Phase::PersistEffect
+            && entry.state == State::Finished(Outcome::Failed)
+            && entry.receipt == Some(WriteStatus::RevisionConflict)));
+    assert!(activity.iter().any(|entry| entry.state
+        == State::Finished(Outcome::Inconclusive(RecoveryIssue::InventoryConflict))
+        && entry.effect == Effect::Verified
+        && !entry.effect_persisted));
     assert_eq!(
         result[0].assessment.issue,
         Some(RecoveryIssue::InventoryConflict)

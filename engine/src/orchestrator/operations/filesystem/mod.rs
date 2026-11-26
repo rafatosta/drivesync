@@ -2,6 +2,9 @@
 pub(super) mod conflicts;
 mod staging;
 mod trash;
+use super::activity::{
+    self, Algorithm, Bytes, Effect, HashProgress, Outcome, Phase, Progress, Span, State, Wait,
+};
 use super::models::*;
 use crate::{inventory::models::LocalState, models::*};
 use sha2::{Digest, Sha256};
@@ -102,30 +105,34 @@ impl Filesystem {
         })
     }
     pub fn temporary(&self) -> Result<File, OperatorError> {
-        let fd = unsafe {
-            libc::openat(
-                self.root.as_raw_fd(),
-                c".".as_ptr(),
-                libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
-                0o600,
-            )
-        };
-        if fd < 0 {
-            return Err(error(std::io::Error::last_os_error()));
-        }
-        Ok(unsafe { File::from_raw_fd(fd) })
+        activity::measured(Phase::PrepareLocal, State::Waiting(Wait::LocalIo), || {
+            let fd = unsafe {
+                libc::openat(
+                    self.root.as_raw_fd(),
+                    c".".as_ptr(),
+                    libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
+                    0o600,
+                )
+            };
+            if fd < 0 {
+                return Err(error(std::io::Error::last_os_error()));
+            }
+            Ok(unsafe { File::from_raw_fd(fd) })
+        })
     }
     pub fn read(&self, path: &StdPath) -> Result<File, OperatorError> {
-        let entry = self.entry(path)?;
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(entry.anchored())
-            .map_err(error)?;
-        if !file.metadata().map_err(error)?.is_file() {
-            return Err(invalid());
-        }
-        Ok(file)
+        activity::measured(Phase::ReadLocal, State::Waiting(Wait::LocalIo), || {
+            let entry = self.entry(path)?;
+            let file = OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+                .open(entry.anchored())
+                .map_err(error)?;
+            if !file.metadata().map_err(error)?.is_file() {
+                return Err(invalid());
+            }
+            Ok(file)
+        })
     }
     pub fn observe(&self, path: &StdPath) -> Result<LocalState, OperatorError> {
         let entry = self.entry(path)?;
@@ -137,23 +144,30 @@ impl Filesystem {
             let _sample = crate::performance::Sample::begin("operation_local_verification");
             let mut file = self.read(path)?;
             let before = file.metadata().map_err(error)?;
-            let mut digest = Sha256::new();
-            let mut buf = [0; 65536];
-            loop {
-                let n = file.read(&mut buf).map_err(error)?;
-                if n == 0 {
-                    break;
+            let mut progress =
+                HashProgress::new(Phase::Checksum, Some(before.len()), Algorithm::Sha256);
+            let result = (|| {
+                let mut digest = Sha256::new();
+                let mut buf = [0; 65536];
+                loop {
+                    let n = file.read(&mut buf).map_err(error)?;
+                    if n == 0 {
+                        break;
+                    }
+                    digest.update(&buf[..n]);
+                    progress.processed(n);
                 }
-                digest.update(&buf[..n]);
-            }
-            let after = file.metadata().map_err(error)?;
-            if stamp(&before) != stamp(&after) || stamp(&meta) != stamp(&after) {
-                return Err(stale());
-            }
-            Evidence::Known(Checksum {
-                algorithm: "sha256".into(),
-                value: format!("{:x}", digest.finalize()),
-            })
+                let after = file.metadata().map_err(error)?;
+                if stamp(&before) != stamp(&after) || stamp(&meta) != stamp(&after) {
+                    return Err(stale());
+                }
+                Ok(Evidence::Known(Checksum {
+                    algorithm: "sha256".into(),
+                    value: format!("{:x}", digest.finalize()),
+                }))
+            })();
+            progress.result(&result);
+            result?
         } else {
             Evidence::NotApplicable
         };
@@ -216,27 +230,29 @@ impl Filesystem {
         }
     }
     pub fn check(&self, expected: &LocalState) -> Result<LocalState, OperatorError> {
-        let path = expected.path.as_deref().ok_or_else(invalid)?;
-        let current = self.observe(path)?;
-        let identity_matches = match (&expected.identity, &current.identity) {
-            (Evidence::Known(a), Evidence::Known(b)) => a == b,
-            _ => false,
-        };
-        if expected.state != FileState::Present
-            || !identity_matches
-            || expected.kind != current.kind
-            || expected.modified_at != current.modified_at
-            || expected.changed_at != current.changed_at
-            || expected.size != current.size
-        {
-            return Err(stale());
-        }
-        if let Evidence::Known(hash) = &expected.checksum {
-            if hash.algorithm != "sha256" || expected.checksum != current.checksum {
+        activity::measured(Phase::CheckIdentity, State::Running, || {
+            let path = expected.path.as_deref().ok_or_else(invalid)?;
+            let current = self.observe(path)?;
+            let identity_matches = match (&expected.identity, &current.identity) {
+                (Evidence::Known(a), Evidence::Known(b)) => a == b,
+                _ => false,
+            };
+            if expected.state != FileState::Present
+                || !identity_matches
+                || expected.kind != current.kind
+                || expected.modified_at != current.modified_at
+                || expected.changed_at != current.changed_at
+                || expected.size != current.size
+            {
                 return Err(stale());
             }
-        }
-        Ok(current)
+            if let Evidence::Known(hash) = &expected.checksum {
+                if hash.algorithm != "sha256" || expected.checksum != current.checksum {
+                    return Err(stale());
+                }
+            }
+            Ok(current)
+        })
     }
     pub(in crate::orchestrator::operations) fn movement_target(
         op: &Operation,
@@ -332,9 +348,11 @@ impl Filesystem {
         let op = &request.operation;
         let path = op.local_path.as_deref().ok_or_else(invalid)?;
         let local = match op.action {
-            OperationAction::CreateLocalDirectory => {
-                self.create_staged_directory(request, journal.ok_or_else(stale)?)?
-            }
+            OperationAction::CreateLocalDirectory => activity::measured(
+                Phase::CreateDirectory,
+                State::Waiting(Wait::LocalIo),
+                || self.create_staged_directory(request, journal.ok_or_else(stale)?),
+            )?,
             OperationAction::RenameLocal | OperationAction::MoveLocal => {
                 self.check(&request.local)?;
                 let target = Self::movement_target(&request.operation)?;
@@ -397,7 +415,9 @@ impl Filesystem {
                 {
                     return Err(stale());
                 }
-                rename(&source, &dest, libc::RENAME_NOREPLACE)?;
+                activity::applied(Phase::MoveLocal, || {
+                    rename(&source, &dest, libc::RENAME_NOREPLACE)
+                })?;
                 source.parent.sync_all().map_err(|e| error(e).uncertain())?;
                 dest.parent.sync_all().map_err(|e| error(e).uncertain())?;
                 if destination_parent != self.parent_identity(&target)? {
@@ -473,11 +493,33 @@ impl Filesystem {
             .open(stage.anchored())
             .map_err(error)?;
         bytes.rewind().map_err(error)?;
-        std::io::copy(bytes, &mut output).map_err(|e| error(e).uncertain())?;
-        output
-            .flush()
-            .and_then(|_| output.sync_all())
-            .map_err(|e| error(e).uncertain())?;
+        let mut copy = Span::start(Phase::CopyLocal, State::Waiting(Wait::LocalIo));
+        let copied = std::io::copy(bytes, &mut output).map_err(|e| error(e).uncertain());
+        if let Ok(written) = copied {
+            copy.progress(
+                Progress::Bytes(Bytes {
+                    written: Some(written),
+                    total: match request.remote.size {
+                        Evidence::Known(total)
+                            if request.operation.action != OperationAction::CreateLocalShortcut =>
+                        {
+                            Some(total)
+                        }
+                        _ => None,
+                    },
+                    ..Bytes::default()
+                }),
+                true,
+            );
+        }
+        copy.result(&copied);
+        copied?;
+        activity::measured(Phase::PrepareLocal, State::Waiting(Wait::LocalIo), || {
+            output
+                .flush()
+                .and_then(|_| output.sync_all())
+                .map_err(|e| error(e).uncertain())
+        })?;
         if matches!(
             request.operation.action,
             OperationAction::Download
@@ -494,30 +536,48 @@ impl Filesystem {
                 .and_then(|_| output.sync_all())
                 .map_err(|e| error(e).uncertain())?;
         }
-        if request.operation.action == OperationAction::UpdateLocalContent {
-            self.check(&request.local)?;
-            let trash = prepare(&stage, &self.absolute.join(path))?;
-            self.check(&request.local)?;
-            rename(&stage, &dest, libc::RENAME_EXCHANGE)?;
-            if let Some(trash) = trash {
-                trash.commit(&stage).map_err(OperatorError::uncertain)?;
-            } else {
-                // The reserved staging path retains the previous inode when trash is on
-                // another mount. Its location is recorded in the execution journal.
-                let retained = self
-                    .observe(&stage_path)
-                    .map_err(OperatorError::uncertain)?;
-                if !trash::same_retained_content(&retained, &request.local) {
-                    return Err(stale().uncertain());
-                }
-            }
+        let phase = if request.operation.action == OperationAction::UpdateLocalContent {
+            Phase::ReplaceLocal
         } else {
-            rename(&stage, &dest, libc::RENAME_NOREPLACE)?;
-        }
-        dest.parent
-            .sync_all()
-            .map_err(|error_| error(error_).uncertain())?;
-        self.observe(path).map_err(OperatorError::uncertain)
+            Phase::PublishLocal
+        };
+        let mut publication = Span::start(phase, State::Running);
+        let result = publication.within_sync(|| {
+            if request.operation.action == OperationAction::UpdateLocalContent {
+                self.check(&request.local)?;
+                let trash = prepare(&stage, &self.absolute.join(path))?;
+                self.check(&request.local)?;
+                rename(&stage, &dest, libc::RENAME_EXCHANGE)?;
+                publication.effect(Effect::Applied, false);
+                if let Some(trash) = trash {
+                    trash.commit(&stage).map_err(OperatorError::uncertain)?;
+                } else {
+                    // The reserved staging path retains the previous inode when trash is on
+                    // another mount. Its location is recorded in the execution journal.
+                    let retained = self
+                        .observe(&stage_path)
+                        .map_err(OperatorError::uncertain)?;
+                    if !trash::same_retained_content(&retained, &request.local) {
+                        return Err(stale().uncertain());
+                    }
+                }
+            } else {
+                rename(&stage, &dest, libc::RENAME_NOREPLACE)?;
+                publication.effect(Effect::Applied, false);
+            }
+            dest.parent
+                .sync_all()
+                .map_err(|error_| error(error_).uncertain())?;
+            self.observe(path).map_err(OperatorError::uncertain)
+        });
+        publication.finish(match &result {
+            Ok(_) => Outcome::Complete,
+            Err(error) if error.effect != crate::models::ExecutionEffect::NotApplied => {
+                Outcome::Unconfirmed
+            }
+            Err(_) => Outcome::Failed,
+        });
+        result
     }
 }
 use std::io::Seek;

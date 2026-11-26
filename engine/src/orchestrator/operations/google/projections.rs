@@ -19,9 +19,8 @@ impl GoogleOperator {
         self.check_destination(session, config, &parents[0], name, Some(id), false)
             .await?;
         let quote = |s: &str| s.replace('\\', "\\\\").replace('\'', "\\'");
-        let result = self
-            .client
-            .files_list(
+        let result = activity::page(
+            self.client.files_list(
                 session,
                 FileListOptions {
                     q: Some(format!(
@@ -37,9 +36,11 @@ impl GoogleOperator {
                     include_items_from_all_drives: Some(true),
                     ..Default::default()
                 },
-            )
-            .await
-            .map_err(read_error)?;
+            ),
+            |page| page.files.len(),
+        )
+        .await
+        .map_err(read_error)?;
         if result.incomplete_search != Some(false)
             || result.next_page_token.is_some()
             || result

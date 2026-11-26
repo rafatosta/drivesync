@@ -58,15 +58,22 @@ pub(super) async fn endpoint(
             let request = String::from_utf8_lossy(&bytes).into_owned();
             captured.lock().unwrap().push(request.clone());
             let (status, body, headers) = handler(&request);
-            let mut response = format!(
-                "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n",
-                body.len()
-            );
+            let mut response = format!("HTTP/1.1 {status} Test\r\nConnection: close\r\n");
+            let chunked = headers
+                .iter()
+                .any(|(name, value)| name == "Transfer-Encoding" && value == "chunked");
+            if !chunked {
+                response.push_str(&format!("Content-Length: {}\r\n", body.len()));
+            }
             for (name, value) in headers {
                 response.push_str(&format!("{name}: {value}\r\n"));
             }
             response.push_str("\r\n");
-            response.push_str(&body);
+            if chunked {
+                response.push_str(&format!("{:x}\r\n{body}\r\n0\r\n\r\n", body.len()));
+            } else {
+                response.push_str(&body);
+            }
             stream.write_all(response.as_bytes()).await.unwrap();
         }
     });
@@ -230,24 +237,31 @@ async fn version_change_or_missing_validator_prevents_remote_mutation() {
 }
 #[tokio::test]
 async fn download_checks_digest_before_publishing_local_bytes() {
-    for valid in [true, false] {
+    for (valid, chunked) in [(true, false), (true, true), (false, false)] {
         let s = Sandbox::new();
         let executor = setup(&s);
         let server = endpoint(move |r| {
-            let body = if r.contains("alt=media") {
-                if valid { "bytes" } else { "wrong" }.into()
+            if r.contains("alt=media") {
+                let headers = if chunked {
+                    vec![("Transfer-Encoding".into(), "chunked".into())]
+                } else {
+                    vec![]
+                };
+                (200, if valid { "bytes" } else { "wrong" }.into(), headers)
             } else {
-                metadata("file", "remote-root", 1, "bytes")
-            };
-            (200, body, vec![])
+                (200, metadata("file", "remote-root", 1, "bytes"), vec![])
+            }
         })
         .await;
-        let result = operator(&s, server.client.clone())
-            .run(
+        let inbox = activity::ActivityInbox::for_config(&executor.config);
+        let request = request(&executor, OperationAction::Download);
+        let google = operator(&s, server.client.clone());
+        let session = GoogleSession::new("test", "synthetic");
+        let result = inbox
+            .test_execute(
                 &executor.config,
-                &request(&executor, OperationAction::Download),
-                &executor.filesystem,
-                &GoogleSession::new("test", "synthetic"),
+                &request,
+                Box::pin(google.run(&executor.config, &request, &executor.filesystem, &session)),
             )
             .await;
         if valid {
@@ -260,6 +274,41 @@ async fn download_checks_digest_before_publishing_local_bytes() {
             assert!(result.is_err());
             assert!(!executor.config.local_root.join("file").exists());
         }
+        let records = inbox.take_updates();
+        let download = records
+            .iter()
+            .find(|r| r.phase == Phase::Download && r.state == State::Finished(Outcome::Complete))
+            .unwrap();
+        let Some(Progress::Bytes(bytes)) = download.progress else {
+            panic!("missing download progress")
+        };
+        assert_eq!(
+            (bytes.total, bytes.received, bytes.written),
+            (Some(5), Some(5), Some(5))
+        );
+        let verification = records
+            .iter()
+            .find(|r| r.phase == Phase::VerifyContent && matches!(r.state, State::Finished(_)))
+            .unwrap();
+        assert_eq!(
+            verification.state,
+            State::Finished(if valid {
+                Outcome::Complete
+            } else {
+                Outcome::Failed
+            })
+        );
+        let Some(Progress::Bytes(bytes)) = verification.progress else {
+            panic!("missing hash progress")
+        };
+        assert_eq!(
+            (bytes.hashed, bytes.algorithm),
+            (Some(5), Some(Algorithm::Sha256))
+        );
+        assert_eq!(
+            records.iter().any(|r| r.phase == Phase::PublishLocal),
+            valid
+        );
     }
 }
 #[tokio::test]

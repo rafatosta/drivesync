@@ -66,23 +66,29 @@ impl Filesystem {
         size: u64,
         hash: &str,
     ) -> Result<(), OperatorError> {
-        let mut file = Self::archive_file(parent, name)?;
-        if file.metadata().map_err(error)?.len() != size {
-            return Err(stale());
-        }
-        let mut digest = Sha256::new();
-        let mut buffer = [0; 65536];
-        loop {
-            let n = file.read(&mut buffer).map_err(error)?;
-            if n == 0 {
-                break;
+        let mut progress = HashProgress::new(Phase::VerifyArchive, Some(size), Algorithm::Sha256);
+        let result = (|| {
+            let mut file = Self::archive_file(parent, name)?;
+            if file.metadata().map_err(error)?.len() != size {
+                return Err(stale());
             }
-            digest.update(&buffer[..n]);
-        }
-        if format!("{:x}", digest.finalize()) != hash {
-            return Err(stale());
-        }
-        Ok(())
+            let mut digest = Sha256::new();
+            let mut buffer = [0; 65536];
+            loop {
+                let n = file.read(&mut buffer).map_err(error)?;
+                if n == 0 {
+                    break;
+                }
+                digest.update(&buffer[..n]);
+                progress.processed(n);
+            }
+            if format!("{:x}", digest.finalize()) != hash {
+                return Err(stale());
+            }
+            Ok(())
+        })();
+        progress.result(&result);
+        result
     }
     pub(in crate::orchestrator::operations) fn conflict_archived(
         &self,
@@ -194,24 +200,43 @@ impl Filesystem {
             .custom_flags(libc::O_NOFOLLOW)
             .open(entry.anchored())
             .map_err(error)?;
-        let mut count = 0u64;
-        let mut digest = Sha256::new();
-        let mut buffer = [0; 65536];
-        loop {
-            let n = source.read(&mut buffer).map_err(error)?;
-            if n == 0 {
-                break;
+        let mut copy = Span::start(Phase::ArchiveConflict, State::Running);
+        let mut hash_progress = HashProgress::new(Phase::Checksum, Some(size), Algorithm::Sha256);
+        let mut bytes = Bytes {
+            total: Some(size),
+            read: Some(0),
+            written: Some(0),
+            ..Bytes::default()
+        };
+        let result = (|| {
+            let mut count = 0u64;
+            let mut digest = Sha256::new();
+            let mut buffer = [0; 65536];
+            loop {
+                let n = source.read(&mut buffer).map_err(error)?;
+                if n == 0 {
+                    break;
+                }
+                count += n as u64;
+                bytes.read = Some(count);
+                if count > size {
+                    return Err(stale());
+                }
+                stage.write_all(&buffer[..n]).map_err(error)?;
+                bytes.written = Some(count);
+                copy.progress(Progress::Bytes(bytes), false);
+                digest.update(&buffer[..n]);
+                hash_progress.processed(n);
             }
-            count += n as u64;
-            if count > size {
+            if count != size || format!("{:x}", digest.finalize()) != hash {
                 return Err(stale());
             }
-            stage.write_all(&buffer[..n]).map_err(error)?;
-            digest.update(&buffer[..n]);
-        }
-        if count != size || format!("{:x}", digest.finalize()) != hash {
-            return Err(stale());
-        }
+            Ok(())
+        })();
+        hash_progress.result(&result);
+        copy.progress(Progress::Bytes(bytes), true);
+        copy.result(&result);
+        result?;
         stage.sync_all().map_err(error)?;
         let dest = Entry {
             parent: parent.try_clone().map_err(error)?,

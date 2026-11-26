@@ -163,7 +163,34 @@ async fn upload_reopens_after_first_block_and_never_restarts_a_create() {
             interrupt: case != "lost-final",
         });
         let r = upload_request(&executor);
-        let result = executor.execute(r).await;
+        let execution_id = r.execution_id.clone();
+        let inbox = activity::ActivityInbox::for_config(&executor.config);
+        let result = inbox.observe(executor.execute(r)).await;
+        let recorded = inbox.take_updates();
+        let transfer = recorded
+            .iter()
+            .rev()
+            .find(|r| r.phase == Phase::Upload && matches!(r.state, State::Finished(_)))
+            .unwrap();
+        let Some(Progress::Bytes(bytes)) = transfer.progress else {
+            panic!("missing upload progress")
+        };
+        assert_eq!(bytes.total, Some(300000));
+        if case == "resume" {
+            assert_eq!(
+                (bytes.confirmed, bytes.submitted),
+                (Some(262144), Some(262144))
+            );
+            assert_eq!(transfer.state, State::Finished(Outcome::Unconfirmed));
+        } else if case == "lost-final" {
+            assert_eq!(
+                (bytes.confirmed, bytes.submitted),
+                (Some(262144), Some(300000))
+            );
+        }
+        let root = recorded.last().unwrap();
+        assert_eq!(root.state, State::Finished(Outcome::Unconfirmed));
+        assert_eq!(root.execution.id.as_ref(), Some(&execution_id));
         assert_eq!(result.status, OperationResultStatus::Unconfirmed, "{case}");
         assert!(interrupted.load(Ordering::SeqCst));
         if case == "source-changed" {
@@ -174,7 +201,44 @@ async fn upload_reopens_after_first_block_and_never_restarts_a_create() {
             .unwrap();
         }
         let reopened = reopen(&s, executor);
-        let recovered = reopened.recover().await.unwrap();
+        let recovered = inbox.observe(reopened.recover()).await.unwrap();
+        let records = inbox.take_updates();
+        let attempt = records
+            .iter()
+            .find(|r| {
+                r.execution.id.as_ref() == Some(&execution_id)
+                    && matches!(
+                        r.execution.kind,
+                        activity::Kind::RecoverItem(OperationAction::Upload)
+                    )
+                    && matches!(r.state, State::Finished(_))
+                    && r.execution.display_item == Some(r.id)
+            })
+            .unwrap();
+        if matches!(case, "resume" | "settling") {
+            let progress: Vec<_> = records
+                .iter()
+                .filter_map(|r| match (r.phase, r.progress, r.state) {
+                    (Phase::Upload, Some(Progress::Bytes(bytes)), _) => Some(bytes),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(progress.first().unwrap().confirmed, Some(262144));
+            let last = progress.last().unwrap();
+            assert_eq!(
+                (last.confirmed, last.submitted_this_attempt),
+                (Some(300000), Some(37856))
+            );
+        }
+        assert_eq!(
+            attempt.state,
+            State::Finished(if let Some(issue) = recovered[0].assessment.issue {
+                Outcome::Inconclusive(issue)
+            } else {
+                Outcome::Complete
+            }),
+            "{case}"
+        );
         let rows = reopened
             .inventory
             .enumerate(InventoryScopeQuery {
