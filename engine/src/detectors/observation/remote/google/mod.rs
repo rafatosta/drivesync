@@ -1,5 +1,6 @@
 //! Google read-only observation with incremental file evidence and scoped recovery.
 mod normalize;
+use super::super::progress::ScanProgress;
 use super::{interfaces::*, models::*};
 use crate::detectors::observation::{ObservationCoverage, RemoteObservation};
 use crate::{models::*, providers::google::*};
@@ -219,7 +220,11 @@ impl GoogleObserver {
             let mut updated = BTreeSet::new();
             while pages < budget {
                 if let Some(progress) = &request.progress {
-                    progress.report(None, state.known.len() as u64, pages);
+                    progress.report(|| ScanProgress {
+                        path: None,
+                        items: state.known.len() as u64,
+                        pages,
+                    });
                 }
                 let _sample = crate::performance::Sample::begin("google_changes_page");
                 let token = state
@@ -350,7 +355,11 @@ impl GoogleObserver {
                     }
                 }
                 if let Some(progress) = &request.progress {
-                    progress.finish(None, state.known.len() as u64, pages);
+                    progress.publish(true, || ScanProgress {
+                        path: None,
+                        items: state.known.len() as u64,
+                        pages,
+                    });
                 }
                 return Ok(self.result(
                     observations,
@@ -377,11 +386,11 @@ impl GoogleObserver {
                 return Err(RemoteObserverError::IncompleteCoverage);
             }
             if let Some(progress) = &request.progress {
-                progress.report(
-                    remote_path(&parent, &self.config.remote_root_id, &capture.items),
-                    capture.items.len() as u64,
-                    capture.pages_read as u64,
-                );
+                progress.report(|| ScanProgress {
+                    path: remote_path(&parent, &self.config.remote_root_id, &capture.items),
+                    items: capture.items.len() as u64,
+                    pages: capture.pages_read as u64,
+                });
             }
             let _sample = crate::performance::Sample::begin("google_full_capture_page");
             let quote = parent.0.replace('\\', "\\\\").replace('\'', "\\'");
@@ -489,7 +498,11 @@ impl GoogleObserver {
             let path = last_read_parent.as_ref().and_then(|parent| {
                 remote_path(parent, &self.config.remote_root_id, &capture.items)
             });
-            progress.finish(path, capture.items.len() as u64, capture.pages_read as u64);
+            progress.publish(true, || ScanProgress {
+                path,
+                items: capture.items.len() as u64,
+                pages: capture.pages_read as u64,
+            });
         }
         if !capture.folders.is_empty() {
             return Ok(self.result(

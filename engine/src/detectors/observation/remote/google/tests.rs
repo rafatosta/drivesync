@@ -699,8 +699,12 @@ async fn paginated_progress_reports_scoped_folder_names_without_publishing_parti
     let received = samples.clone();
     let mut req = request(RemoteObserveMode::Initial, 1);
     req.progress = Some(crate::detectors::observation::ProgressReporter::new(
-        move |path, items, pages| {
-            received.lock().unwrap().push((path, items, pages));
+        move |sample| {
+            let scan = sample.value;
+            received
+                .lock()
+                .unwrap()
+                .push((scan.path, scan.items, scan.pages));
         },
     ));
     let progress = req.progress.clone();

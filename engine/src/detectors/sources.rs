@@ -185,11 +185,10 @@ async fn local(
                 tokio::task::spawn_blocking(move || Scanner::open(path, root_id)).await
             {
                 let reporting = handle.clone();
-                scanner.set_progress(super::observation::ProgressReporter::new(
-                    move |path, items, pages| {
-                        reporting.scan_progress(Source::Local, path, items, pages);
-                    },
-                ));
+                scanner.set_progress(super::observation::ProgressReporter::new(move |sample| {
+                    let scan = sample.value;
+                    reporting.scan_progress(Source::Local, scan.path, scan.items, scan.pages);
+                }));
                 observer = Some(Arc::new(Mutex::new(LocalObserver::new(scanner))));
             }
         }
@@ -365,8 +364,9 @@ async fn remote(
         let epoch = *collection_epoch.get_or_insert_with(|| handle.collection_epoch());
         handle.scan_state(Source::Remote, SynchronizationScanState::Reading, None);
         let progress_handle = handle.clone();
-        let progress = super::observation::ProgressReporter::new(move |path, items, pages| {
-            progress_handle.scan_progress(Source::Remote, path, items, pages);
+        let progress = super::observation::ProgressReporter::new(move |sample| {
+            let scan = sample.value;
+            progress_handle.scan_progress(Source::Remote, scan.path, scan.items, scan.pages);
         });
         let round = async {
             let scoped = detectors.clone();

@@ -121,7 +121,11 @@ impl Scanner {
     }
     fn report(&self, path: &StdPath) {
         if let Some(progress) = &self.progress {
-            progress.report(Some(path.to_path_buf()), self.seen.get(), 0);
+            progress.report(|| super::progress::ScanProgress {
+                path: Some(path.to_path_buf()),
+                items: self.seen.get(),
+                pages: 0,
+            });
         }
     }
     /// Raise a soft collection budget on the next complete retry; hard exhaustion remains explicit Partial.
