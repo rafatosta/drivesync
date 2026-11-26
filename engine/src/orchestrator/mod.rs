@@ -6,7 +6,9 @@ mod operations;
 mod refresh;
 use crate::{
     accounts::Accounts,
-    detectors::{context::File, observation::ObservationCoverage},
+    detectors::{
+        activity::Scope as DetectorScope, context::File, observation::ObservationCoverage,
+    },
     inventory::{models::WriteStatus, Inventory, InventoryConfig},
     models::{DateTime, Evidence, Id},
     providers::google::GoogleDriveClient,
@@ -40,6 +42,7 @@ pub(crate) struct OrchestratorHandle {
     finished: watch::Receiver<bool>,
     status: watch::Receiver<SynchronizationStatus>,
     telemetry: watch::Sender<SynchronizationStatus>,
+    detector_scope: DetectorScope,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
@@ -325,6 +328,10 @@ fn start_guarded(
         finished.send_replace(true);
     });
     OrchestratorHandle {
+        detector_scope: DetectorScope {
+            account: config.roots.account_id.clone(),
+            root: config.sync_root_id.clone(),
+        },
         config,
         files,
         stop,

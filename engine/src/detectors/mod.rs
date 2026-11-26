@@ -1,5 +1,6 @@
 //! Internal observation and context services for synchronization.
 
+pub(crate) mod activity;
 pub(crate) mod context;
 pub(crate) mod observation;
 
