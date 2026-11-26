@@ -130,9 +130,9 @@ post-effect barrier; older-than-baseline remote versions defer. NoOp still perfo
 
 Public `SynchronizationStatus.work` contains independent local/remote collection telemetry
 and the last item actually passed to Analyzer (name/path, kind, observation origin and analysis
-count). Source reporters bypass the bounded execution queue so a slow operation cannot hide
-read progress. Publications preserve this telemetry atomically; it never grants observation
-coverage, marks an operation confirmed, or supplies an account completion percentage.
+count). The status supervisor consumes a scoped Detectors activity inbox and projects local
+and remote scan summaries while the worker executes operations. The functional queue carries
+coverage and the other evidence needed for decisions. [Detector observability](OBSERVATION_SOURCES.md#detector-observability)
 
 `pending` identifies an unresolved observation wait separately from current work. Its `since`
 is the first publication of the same item and wait reason in the worker session; repeated
