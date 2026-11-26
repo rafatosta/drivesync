@@ -27,7 +27,6 @@ fn observer(server: &Server) -> GoogleObserver {
 }
 fn request(mode: RemoteObserveMode, budget: u64) -> RemoteObserveRequest {
     RemoteObserveRequest {
-        progress: None,
         scope: RemoteScope {
             account_id: AccountId("account".into()),
             provider_id: ProviderId("google".into()),
@@ -67,20 +66,35 @@ async fn paginated_capture_publishes_only_complete_coverage_then_uses_changes_cu
     let token = CancellationToken::new();
     let auth = session();
     let first = observer
-        .observe(request(RemoteObserveMode::Initial, 1), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Initial, 1),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(first.coverage, ObservationCoverage::Partial);
     assert!(first.observations.is_empty());
     assert!(first.has_more);
     let second = observer
-        .observe(request(RemoteObserveMode::Incremental, 1), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Incremental, 1),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(second.coverage, ObservationCoverage::Complete);
     assert_eq!(second.observations.len(), 2);
     let third = observer
-        .observe(request(RemoteObserveMode::Incremental, 1), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Incremental, 1),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(third.observations.len(), 2);
@@ -108,14 +122,24 @@ async fn incomplete_search_and_cursor_cycles_never_confirm_absence() {
         let token = CancellationToken::new();
         let auth = session();
         let first = observer
-            .observe(request(RemoteObserveMode::Initial, 1), &auth, &token)
+            .observe(
+                request(RemoteObserveMode::Initial, 1),
+                &auth,
+                &token,
+                RemoteActivity::default(),
+            )
             .await;
         if let Err(error) = first {
             assert_eq!(error, RemoteObserverError::IncompleteCoverage);
         } else {
             assert_eq!(
                 observer
-                    .observe(request(RemoteObserveMode::Incremental, 1), &auth, &token)
+                    .observe(
+                        request(RemoteObserveMode::Incremental, 1),
+                        &auth,
+                        &token,
+                        RemoteActivity::default()
+                    )
                     .await
                     .unwrap_err(),
                 RemoteObserverError::InvalidCursor
@@ -131,7 +155,12 @@ async fn cancelled_and_cross_account_requests_do_not_access_the_provider() {
     token.cancel();
     assert_eq!(
         observer
-            .observe(request(RemoteObserveMode::Initial, 1), &session(), &token)
+            .observe(
+                request(RemoteObserveMode::Initial, 1),
+                &session(),
+                &token,
+                RemoteActivity::default()
+            )
             .await
             .unwrap_err(),
         RemoteObserverError::Cancelled
@@ -143,7 +172,8 @@ async fn cancelled_and_cross_account_requests_do_not_access_the_provider() {
             .observe(
                 request(RemoteObserveMode::Initial, 1),
                 &auth,
-                &CancellationToken::new()
+                &CancellationToken::new(),
+                RemoteActivity::default()
             )
             .await
             .unwrap_err(),
@@ -182,7 +212,12 @@ async fn changes_recapture_moves_out_of_scope_without_claiming_deletion() {
     let token = CancellationToken::new();
     assert_eq!(
         observer
-            .observe(request(RemoteObserveMode::Initial, 4), &auth, &token)
+            .observe(
+                request(RemoteObserveMode::Initial, 4),
+                &auth,
+                &token,
+                RemoteActivity::default()
+            )
             .await
             .unwrap()
             .observations
@@ -190,7 +225,12 @@ async fn changes_recapture_moves_out_of_scope_without_claiming_deletion() {
         1
     );
     let result = observer
-        .observe(request(RemoteObserveMode::Incremental, 4), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Incremental, 4),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(result.coverage, ObservationCoverage::Complete);
@@ -217,6 +257,7 @@ async fn nested_folders_are_traversed_and_unrelated_parent_entries_are_rejected(
                 request(RemoteObserveMode::Initial, 4),
                 &session(),
                 &CancellationToken::new(),
+                RemoteActivity::default(),
             )
             .await;
         if parent == "folder" {
@@ -249,19 +290,34 @@ async fn expired_cursor_recovers_by_a_new_capture_and_cancellation_interrupts_re
     let auth = session();
     let token = CancellationToken::new();
     observer
-        .observe(request(RemoteObserveMode::Initial, 4), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Initial, 4),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(
         observer
-            .observe(request(RemoteObserveMode::Incremental, 4), &auth, &token)
+            .observe(
+                request(RemoteObserveMode::Incremental, 4),
+                &auth,
+                &token,
+                RemoteActivity::default()
+            )
             .await
             .unwrap_err(),
         RemoteObserverError::InvalidCursor
     );
     assert_eq!(
         observer
-            .observe(request(RemoteObserveMode::Recovery, 4), &auth, &token)
+            .observe(
+                request(RemoteObserveMode::Recovery, 4),
+                &auth,
+                &token,
+                RemoteActivity::default()
+            )
             .await
             .unwrap()
             .continuation
@@ -274,7 +330,12 @@ async fn expired_cursor_recovers_by_a_new_capture_and_cancellation_interrupts_re
     let server = Server::start(vec![delayed]);
     let observer = super::tests::observer(&server);
     let token = CancellationToken::new();
-    let work = observer.observe(request(RemoteObserveMode::Initial, 4), &auth, &token);
+    let work = observer.observe(
+        request(RemoteObserveMode::Initial, 4),
+        &auth,
+        &token,
+        RemoteActivity::default(),
+    );
     tokio::pin!(work);
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(40), &mut work)
@@ -347,7 +408,12 @@ async fn persisted_missing_ids_are_probed_after_restart_without_inventing_absenc
         let mut request = request(RemoteObserveMode::Initial, 4);
         request.known_remote_ids = vec![RemoteId("persisted".into())];
         let result = observer
-            .observe(request, &session(), &CancellationToken::new())
+            .observe(
+                request,
+                &session(),
+                &CancellationToken::new(),
+                RemoteActivity::default(),
+            )
             .await
             .unwrap();
         assert_eq!(result.observations.len(), 1);
@@ -401,7 +467,12 @@ async fn missing_item_ancestry_errors_cycles_and_wrong_ids_remain_inconclusive()
         let mut request = request(RemoteObserveMode::Initial, 4);
         request.known_remote_ids = vec![RemoteId("persisted".into())];
         let result = observer
-            .observe(request, &session(), &CancellationToken::new())
+            .observe(
+                request,
+                &session(),
+                &CancellationToken::new(),
+                RemoteActivity::default(),
+            )
             .await
             .unwrap();
         assert_eq!(result.observations[0].state, FileState::Unknown);
@@ -437,7 +508,8 @@ async fn a_soft_item_limit_retries_the_same_unchanged_tree_with_larger_capacity(
             .observe(
                 request(RemoteObserveMode::Initial, 16),
                 &session(),
-                &CancellationToken::new()
+                &CancellationToken::new(),
+                RemoteActivity::default()
             )
             .await,
         Err(RemoteObserverError::IncompleteCoverage)
@@ -448,6 +520,7 @@ async fn a_soft_item_limit_retries_the_same_unchanged_tree_with_larger_capacity(
             request(RemoteObserveMode::Recovery, 16),
             &session(),
             &CancellationToken::new(),
+            RemoteActivity::default(),
         )
         .await
         .unwrap();
@@ -478,17 +551,32 @@ async fn quiet_changes_cursors_still_refresh_current_metadata_without_another_ed
     let auth = session();
     let token = CancellationToken::new();
     observer
-        .observe(request(RemoteObserveMode::Initial, 16), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Initial, 16),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     let cached = observer
-        .observe(request(RemoteObserveMode::Incremental, 16), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Incremental, 16),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(cached.observations[0].version, Evidence::Known(1));
     observer.state.lock().await.last_full = Some(Instant::now() - AUDIT_INTERVAL);
     let refreshed = observer
-        .observe(request(RemoteObserveMode::Incremental, 16), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Incremental, 16),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(refreshed.coverage, ObservationCoverage::Complete);
@@ -516,11 +604,21 @@ async fn unavailable_or_denied_roots_recover_from_current_facts_without_another_
         let auth = session();
         let token = CancellationToken::new();
         assert!(observer
-            .observe(request(RemoteObserveMode::Initial, 16), &auth, &token)
+            .observe(
+                request(RemoteObserveMode::Initial, 16),
+                &auth,
+                &token,
+                RemoteActivity::default()
+            )
             .await
             .is_err());
         let after = observer
-            .observe(request(RemoteObserveMode::Recovery, 16), &auth, &token)
+            .observe(
+                request(RemoteObserveMode::Recovery, 16),
+                &auth,
+                &token,
+                RemoteActivity::default(),
+            )
             .await
             .unwrap();
         assert_eq!(after.coverage, ObservationCoverage::Complete);
@@ -565,6 +663,7 @@ async fn office_revision_without_sha256_requires_verified_bytes_and_stable_metad
                 request(RemoteObserveMode::Initial, 16),
                 &session(),
                 &CancellationToken::new(),
+                RemoteActivity::default(),
             )
             .await
             .unwrap();
@@ -602,11 +701,21 @@ async fn a_leaf_change_publishes_its_revision_without_resetting_the_cursor() {
     let auth = session();
     let token = CancellationToken::new();
     observer
-        .observe(request(RemoteObserveMode::Initial, 16), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Initial, 16),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     let updated = observer
-        .observe(request(RemoteObserveMode::Incremental, 16), &auth, &token)
+        .observe(
+            request(RemoteObserveMode::Incremental, 16),
+            &auth,
+            &token,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert_eq!(updated.coverage, ObservationCoverage::Complete);
@@ -654,11 +763,21 @@ async fn changes_for_the_same_binary_revision_reuse_verified_sha256() {
     let auth = session();
     let cancel = CancellationToken::new();
     let first = observer
-        .observe(request(RemoteObserveMode::Initial, 16), &auth, &cancel)
+        .observe(
+            request(RemoteObserveMode::Initial, 16),
+            &auth,
+            &cancel,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     let update = observer
-        .observe(request(RemoteObserveMode::Incremental, 16), &auth, &cancel)
+        .observe(
+            request(RemoteObserveMode::Incremental, 16),
+            &auth,
+            &cancel,
+            RemoteActivity::default(),
+        )
         .await
         .unwrap();
     assert!(matches!(
@@ -683,7 +802,10 @@ async fn changes_for_the_same_binary_revision_reuse_verified_sha256() {
 
 #[tokio::test]
 async fn paginated_progress_reports_scoped_folder_names_without_publishing_partial_evidence() {
-    use std::sync::{Arc, Mutex as StdMutex};
+    use crate::{
+        detectors::activity::{ActivityChannel, Details, Phase, Scope, Source, State},
+        synchronization::SynchronizationWork,
+    };
     let server = Server::start(vec![
         Reply::json(200, r#"{"startPageToken":"start"}"#),
         root(),
@@ -695,35 +817,44 @@ async fn paginated_progress_reports_scoped_folder_names_without_publishing_parti
         root(),
     ]);
     let observer = observer(&server);
-    let samples = Arc::new(StdMutex::new(Vec::new()));
-    let received = samples.clone();
-    let mut req = request(RemoteObserveMode::Initial, 1);
-    req.progress = Some(crate::detectors::observation::ProgressReporter::new(
-        move |sample| {
-            let scan = sample.value;
-            received
-                .lock()
-                .unwrap()
-                .push((scan.path, scan.items, scan.pages));
-        },
-    ));
-    let progress = req.progress.clone();
+    let channel = ActivityChannel::new(Scope {
+        account: AccountId("account".into()),
+        root: SyncRootId("scope".into()),
+    });
+    let scoped = channel.open(Source::Remote);
+    let remote = scoped.publisher().begin(
+        Source::Remote.origin(),
+        None,
+        Phase::Observe,
+        State::Running,
+        Details::default(),
+    );
+    let req = request(RemoteObserveMode::Initial, 1);
     let result = observer
-        .observe(req, &session(), &CancellationToken::new())
+        .observe(
+            req,
+            &session(),
+            &CancellationToken::new(),
+            RemoteActivity::new(&remote),
+        )
         .await
         .unwrap();
     assert!(result.has_more);
     assert!(result.observations.is_empty());
-    let mut req = request(RemoteObserveMode::Incremental, 1);
-    req.progress = progress;
+    let req = request(RemoteObserveMode::Incremental, 1);
     let result = observer
-        .observe(req, &session(), &CancellationToken::new())
+        .observe(
+            req,
+            &session(),
+            &CancellationToken::new(),
+            RemoteActivity::new(&remote),
+        )
         .await
         .unwrap();
     assert_eq!(result.coverage, ObservationCoverage::Complete);
-    let samples = samples.lock().unwrap();
-    let (path, items, pages) = samples.last().unwrap();
-    assert_eq!(path.as_deref(), Some(std::path::Path::new("Teaching")));
-    assert_eq!((*items, *pages), (1, 2));
-    assert!(!format!("{samples:?}").contains("folder-id"));
+    let mut work = SynchronizationWork::default();
+    channel.take_scan_changes().project(&mut work);
+    let scan = work.remote.unwrap();
+    assert_eq!(scan.path.as_deref(), Some(std::path::Path::new("Teaching")));
+    assert_eq!((scan.items, scan.pages), (1, 2));
 }

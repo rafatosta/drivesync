@@ -77,8 +77,6 @@ pub(crate) struct ScanProgress {
     pub pages: u64,
 }
 
-pub(crate) type ProgressReporter = ActivityReporter<ScanProgress>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

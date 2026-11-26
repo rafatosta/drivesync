@@ -8,6 +8,7 @@ use super::{
     observation::{
         local::LocalObserver,
         remote::{
+            activity::RemoteActivity,
             google::{cancelled, GoogleObserverProvider, GoogleObserverSession},
             interfaces::*,
             models::*,
@@ -494,7 +495,6 @@ async fn remote(
         detectors,
         handle,
         cancel,
-        remote,
         ..
     } = worker.as_ref();
     let initialization = worker.begin(Source::Remote, Phase::Initialize, State::Running);
@@ -533,10 +533,6 @@ async fn remote(
         // the original epoch until every page has been collected or the round fails.
         let epoch = *collection_epoch.get_or_insert_with(|| handle.collection_epoch());
         worker.scan_state(Source::Remote, SynchronizationScanState::Reading, None);
-        let progress_publisher = remote.clone();
-        let progress = super::observation::ProgressReporter::new(move |sample| {
-            progress_publisher.scan(ScanUpdate::Progress(sample.value));
-        });
         let observing = activity.child(
             Phase::Observe,
             State::Waiting(Wait::Worker),
@@ -566,7 +562,6 @@ async fn remote(
             observer
                 .observe(
                     RemoteObserveRequest {
-                        progress: Some(progress),
                         scope: RemoteScope {
                             account_id: config.roots.account_id.clone(),
                             provider_id: config.provider_id.clone(),
@@ -579,6 +574,7 @@ async fn remote(
                     },
                     &session,
                     cancel,
+                    RemoteActivity::new(&observing),
                 )
                 .await
         };

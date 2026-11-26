@@ -1,5 +1,6 @@
 //! Provider observer interfaces, cancellation, and explicit factory dispatch.
 
+use super::activity::RemoteActivity;
 use super::models::{
     RemoteObserveRequest, RemoteObserveResult, RemoteObserverConfig, RemoteObserverError,
 };
@@ -71,6 +72,7 @@ pub(crate) trait RemoteObserver: Send + Sync {
         request: RemoteObserveRequest,
         session: &'a dyn AuthorizedSession,
         cancellation: &'a CancellationToken,
+        activity: RemoteActivity<'a>,
     ) -> RemoteObserverFuture<'a>;
 }
 
@@ -120,6 +122,7 @@ impl RemoteObserver for ScopedRemoteObserver {
         request: RemoteObserveRequest,
         session: &'a dyn AuthorizedSession,
         cancellation: &'a CancellationToken,
+        activity: RemoteActivity<'a>,
     ) -> RemoteObserverFuture<'a> {
         if cancellation.is_cancelled() {
             return Box::pin(async { Err(RemoteObserverError::Cancelled) });
@@ -127,7 +130,8 @@ impl RemoteObserver for ScopedRemoteObserver {
         if !self.accepts(&request, session) {
             return Box::pin(async { Err(RemoteObserverError::AuthorizationRequired) });
         }
-        self.observer.observe(request, session, cancellation)
+        self.observer
+            .observe(request, session, cancellation, activity)
     }
 }
 
@@ -185,6 +189,7 @@ mod tests {
             _: RemoteObserveRequest,
             _: &'a dyn AuthorizedSession,
             _: &'a CancellationToken,
+            _: RemoteActivity<'a>,
         ) -> RemoteObserverFuture<'a> {
             Box::pin(async {
                 Ok(RemoteObserveResult {
@@ -283,7 +288,6 @@ mod tests {
             provider_id: config.provider_id.clone(),
         };
         let request = RemoteObserveRequest {
-            progress: None,
             scope: super::super::models::RemoteScope {
                 account_id: config.account_id.clone(),
                 provider_id: config.provider_id.clone(),
@@ -306,7 +310,6 @@ mod tests {
         };
         assert!(!observer.accepts(
             &RemoteObserveRequest {
-                progress: None,
                 scope: super::super::models::RemoteScope {
                     account_id: config.account_id.clone(),
                     provider_id: config.provider_id.clone(),
@@ -321,7 +324,6 @@ mod tests {
         ));
 
         let mut mismatched_provider_request = RemoteObserveRequest {
-            progress: None,
             scope: super::super::models::RemoteScope {
                 account_id: config.account_id.clone(),
                 provider_id: config.provider_id.clone(),

@@ -11,4 +11,4 @@ pub(crate) mod local;
 pub(crate) mod scanner;
 
 pub(super) mod progress;
-pub(crate) use progress::{ProgressReporter, ScanProgress};
+pub(crate) use progress::ScanProgress;

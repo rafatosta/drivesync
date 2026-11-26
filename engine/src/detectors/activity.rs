@@ -65,6 +65,7 @@ pub(crate) enum Unit {
     SnapshotItems,
     ChecksumsReused,
     ItemsCompared,
+    PagesReceived,
     Bytes,
 }
 

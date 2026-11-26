@@ -1,6 +1,6 @@
 //! Google read-only observation with incremental file evidence and scoped recovery.
 mod normalize;
-use super::super::progress::ScanProgress;
+use super::activity::{Position, RemoteActivity};
 use super::{interfaces::*, models::*};
 use crate::detectors::observation::{ObservationCoverage, RemoteObservation};
 use crate::{models::*, providers::google::*};
@@ -97,6 +97,7 @@ impl RemoteObserver for GoogleObserver {
         request: RemoteObserveRequest,
         session: &'a dyn AuthorizedSession,
         cancel: &'a CancellationToken,
+        activity: RemoteActivity<'a>,
     ) -> RemoteObserverFuture<'a> {
         Box::pin(async move {
             if request.scope.account_id != self.config.account_id
@@ -115,7 +116,7 @@ impl RemoteObserver for GoogleObserver {
             if session.session.account_id != self.config.account_id.0 {
                 return Err(RemoteObserverError::AuthorizationRequired);
             }
-            let work = self.round(request, &session.session);
+            let work = self.round(request, &session.session, activity);
             tokio::pin!(work);
             tokio::select! {biased;_=cancelled(cancel)=>Err(RemoteObserverError::Cancelled),result=&mut work=>result}
         })
@@ -189,6 +190,7 @@ impl GoogleObserver {
         &self,
         request: RemoteObserveRequest,
         session: &GoogleSession,
+        activity: RemoteActivity<'_>,
     ) -> Result<RemoteObserveResult, RemoteObserverError> {
         let mut state = self.state.lock().await;
         if request.known_remote_ids.len() > state.item_limit {
@@ -219,13 +221,11 @@ impl GoogleObserver {
             self.root(session).await?;
             let mut updated = BTreeSet::new();
             while pages < budget {
-                if let Some(progress) = &request.progress {
-                    progress.report(|| ScanProgress {
-                        path: None,
-                        items: state.known.len() as u64,
-                        pages,
-                    });
-                }
+                activity.position(false, || Position {
+                    path: None,
+                    items: state.known.len() as u64,
+                    pages,
+                });
                 let _sample = crate::performance::Sample::begin("google_changes_page");
                 let token = state
                     .feed_token
@@ -354,13 +354,11 @@ impl GoogleObserver {
                         }
                     }
                 }
-                if let Some(progress) = &request.progress {
-                    progress.publish(true, || ScanProgress {
-                        path: None,
-                        items: state.known.len() as u64,
-                        pages,
-                    });
-                }
+                activity.position(true, || Position {
+                    path: None,
+                    items: state.known.len() as u64,
+                    pages,
+                });
                 return Ok(self.result(
                     observations,
                     if state.feed_token.is_some() {
@@ -385,13 +383,11 @@ impl GoogleObserver {
             if capture.pages_read >= 100_000 {
                 return Err(RemoteObserverError::IncompleteCoverage);
             }
-            if let Some(progress) = &request.progress {
-                progress.report(|| ScanProgress {
-                    path: remote_path(&parent, &self.config.remote_root_id, &capture.items),
-                    items: capture.items.len() as u64,
-                    pages: capture.pages_read as u64,
-                });
-            }
+            activity.position(false, || Position {
+                path: remote_path(&parent, &self.config.remote_root_id, &capture.items),
+                items: capture.items.len() as u64,
+                pages: capture.pages_read as u64,
+            });
             let _sample = crate::performance::Sample::begin("google_full_capture_page");
             let quote = parent.0.replace('\\', "\\\\").replace('\'', "\\'");
             let response = self
@@ -494,16 +490,13 @@ impl GoogleObserver {
             .capture
             .as_ref()
             .ok_or(RemoteObserverError::IncompleteCoverage)?;
-        if let Some(progress) = &request.progress {
-            let path = last_read_parent.as_ref().and_then(|parent| {
+        activity.position(true, || Position {
+            path: last_read_parent.as_ref().and_then(|parent| {
                 remote_path(parent, &self.config.remote_root_id, &capture.items)
-            });
-            progress.publish(true, || ScanProgress {
-                path,
-                items: capture.items.len() as u64,
-                pages: capture.pages_read as u64,
-            });
-        }
+            }),
+            items: capture.items.len() as u64,
+            pages: capture.pages_read as u64,
+        });
         if !capture.folders.is_empty() {
             return Ok(self.result(
                 Vec::new(),
