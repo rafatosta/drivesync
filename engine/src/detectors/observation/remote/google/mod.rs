@@ -1,6 +1,6 @@
 //! Google read-only observation with incremental file evidence and scoped recovery.
 mod normalize;
-use super::activity::{Position, RemoteActivity};
+use super::activity::{Collection, Position, Recovery, RemoteActivity, Step};
 use super::{interfaces::*, models::*};
 use crate::detectors::observation::{ObservationCoverage, RemoteObservation};
 use crate::{models::*, providers::google::*};
@@ -65,6 +65,7 @@ struct State {
     feed_token: Option<String>,
     feed_files: Option<BTreeMap<RemoteId, GoogleFile>>,
     feed_seen: BTreeSet<String>,
+    feed_progress: FeedProgress,
     has_snapshot: bool,
 }
 impl Default for State {
@@ -79,17 +80,56 @@ impl Default for State {
             feed_token: None,
             feed_files: Some(BTreeMap::new()),
             feed_seen: BTreeSet::new(),
+            feed_progress: FeedProgress::default(),
         }
     }
 }
+#[derive(Default)]
+struct FeedProgress {
+    requested: u64,
+    received: u64,
+    processed: u64,
+}
+
+impl FeedProgress {
+    fn position(&self, known: usize, round_pages: u64) -> Position {
+        Position {
+            path: None,
+            displayed_pages: round_pages,
+            counts: Collection::Changes {
+                requested: self.requested,
+                received: self.received,
+                processed: self.processed,
+                known: known as u64,
+            },
+        }
+    }
+}
+
 struct Capture {
     checkpoint: String,
     pages_read: usize,
+    pages_requested: u64,
     folders: VecDeque<RemoteId>,
     page: Option<String>,
     pages: BTreeSet<(RemoteId, String)>,
     visited: BTreeSet<RemoteId>,
     items: BTreeMap<RemoteId, RemoteObservation>,
+}
+impl Capture {
+    fn position(&self, parent: Option<&RemoteId>, root: &RemoteId) -> Position {
+        Position {
+            path: parent.and_then(|parent| remote_path(parent, root, &self.items)),
+            displayed_pages: self.pages_read as u64,
+            counts: Collection::Capture {
+                requested: self.pages_requested,
+                received: self.pages_read as u64,
+                collected: self.items.len() as u64,
+                directories_completed: self.visited.len().saturating_sub(self.folders.len()) as u64,
+                directories_pending: self.folders.len() as u64,
+            },
+        }
+    }
 }
 impl RemoteObserver for GoogleObserver {
     fn observe<'a>(
@@ -128,24 +168,32 @@ pub(crate) async fn cancelled(token: &CancellationToken) {
     }
 }
 impl GoogleObserver {
-    async fn root(&self, session: &GoogleSession) -> Result<(), RemoteObserverError> {
-        let file = self
-            .client
-            .files_get(
-                session,
-                &FileId(self.config.remote_root_id.0.clone()),
-                FileGetOptions {
-                    fields: Some(FieldMask(FIELDS.into())),
-                    supports_all_drives: Some(true),
-                    ..Default::default()
-                },
+    async fn root(
+        &self,
+        session: &GoogleSession,
+        activity: RemoteActivity<'_>,
+    ) -> Result<(), RemoteObserverError> {
+        let file = activity
+            .response(
+                Step::ValidateAccess,
+                self.client.files_get(
+                    session,
+                    &FileId(self.config.remote_root_id.0.clone()),
+                    FileGetOptions {
+                        fields: Some(FieldMask(FIELDS.into())),
+                        supports_all_drives: Some(true),
+                        ..Default::default()
+                    },
+                ),
             )
             .await
             .map_err(failure)?;
+        let validation = activity.verifying(Step::ValidateAccess, None);
         if file.id.as_ref().map(|id| id.0.as_str()) != Some(self.config.remote_root_id.0.as_str())
             || file.mime_type.as_ref().map(|m| m.0.as_str()) != Some(FOLDER)
             || file.trashed != Some(false)
         {
+            validation.finish(false);
             return Err(RemoteObserverError::IncompleteCoverage);
         }
         if !file
@@ -153,21 +201,29 @@ impl GoogleObserver {
             .as_ref()
             .is_some_and(|c| c.can_list_children == Some(true))
         {
+            validation.finish(false);
             return Err(RemoteObserverError::PermissionDenied);
         }
+        validation.finish(true);
         Ok(())
     }
-    async fn begin(&self, session: &GoogleSession) -> Result<Capture, RemoteObserverError> {
+    async fn begin(
+        &self,
+        session: &GoogleSession,
+        activity: RemoteActivity<'_>,
+    ) -> Result<Capture, RemoteObserverError> {
         let _sample = crate::performance::Sample::begin("google_full_capture_start");
         // The checkpoint precedes listing so changes during capture cannot fall into a gap.
-        let checkpoint = self
-            .client
-            .changes_get_start_page_token(
-                session,
-                ChangeScopeOptions {
-                    supports_all_drives: Some(true),
-                    ..Default::default()
-                },
+        let checkpoint = activity
+            .response(
+                Step::Checkpoint,
+                self.client.changes_get_start_page_token(
+                    session,
+                    ChangeScopeOptions {
+                        supports_all_drives: Some(true),
+                        ..Default::default()
+                    },
+                ),
             )
             .await
             .map_err(failure)?
@@ -175,10 +231,11 @@ impl GoogleObserver {
         if checkpoint.is_empty() {
             return Err(RemoteObserverError::InvalidCursor);
         }
-        self.root(session).await?;
+        self.root(session, activity).await?;
         Ok(Capture {
             checkpoint,
             pages_read: 0,
+            pages_requested: 0,
             folders: VecDeque::from([self.config.remote_root_id.clone()]),
             page: None,
             pages: BTreeSet::new(),
@@ -192,8 +249,13 @@ impl GoogleObserver {
         session: &GoogleSession,
         activity: RemoteActivity<'_>,
     ) -> Result<RemoteObserveResult, RemoteObserverError> {
+        let waiting = activity.state_lock();
         let mut state = self.state.lock().await;
+        waiting.finish(true);
         if request.known_remote_ids.len() > state.item_limit {
+            activity
+                .verifying(Step::Recover(Recovery::Budget), None)
+                .finish(false);
             state.item_limit = state.item_limit.saturating_mul(2).min(1_600_000);
             return Err(RemoteObserverError::IncompleteCoverage);
         }
@@ -212,19 +274,21 @@ impl GoogleObserver {
             state.feed_seen.clear();
         }
         if state.capture.is_none() && state.cursor.is_none() {
-            state.capture = Some(self.begin(session).await?);
+            state.capture = Some(self.begin(session, activity).await?);
         }
         let item_limit = state.item_limit;
         let mut pages = 0;
         let mut last_read_parent = None;
         if state.capture.is_none() {
-            self.root(session).await?;
+            self.root(session, activity).await?;
+            if state.feed_token.is_none() {
+                state.feed_progress = FeedProgress::default();
+            }
             let mut updated = BTreeSet::new();
             while pages < budget {
-                activity.position(false, || Position {
-                    path: None,
-                    items: state.known.len() as u64,
-                    pages,
+                state.feed_progress.requested += 1;
+                activity.position(pages == 0, || {
+                    state.feed_progress.position(state.known.len(), pages)
                 });
                 let _sample = crate::performance::Sample::begin("google_changes_page");
                 let token = state
@@ -232,12 +296,26 @@ impl GoogleObserver {
                     .clone()
                     .or_else(|| state.cursor.clone())
                     .ok_or(RemoteObserverError::InvalidCursor)?;
-                let response=self.client.changes_list(session,ChangeListOptions {page_token:token.clone(),page_size:Some(100),include_removed:Some(true),include_corpus_removals:Some(true),include_items_from_all_drives:Some(true),supports_all_drives:Some(true),
-                    fields:Some(FieldMask(format!("changes(fileId,removed,changeType,file({FIELDS})),nextPageToken,newStartPageToken"))),..Default::default()}).await;
+                let response = activity.response(Step::Changes, self.client.changes_list(
+                    session,
+                    ChangeListOptions {
+                        page_token: token.clone(),
+                        page_size: Some(100),
+                        include_removed: Some(true),
+                        include_corpus_removals: Some(true),
+                        include_items_from_all_drives: Some(true),
+                        supports_all_drives: Some(true),
+                        fields: Some(FieldMask(format!("changes(fileId,removed,changeType,file({FIELDS})),nextPageToken,newStartPageToken"))),
+                        ..Default::default()
+                    },
+                )).await;
                 let response = match response {
                     Ok(response) => response,
                     Err(error) => {
                         if error.kind == GoogleApiError::ExpiredCursor {
+                            activity
+                                .verifying(Step::Recover(Recovery::InvalidContinuation), None)
+                                .finish(false);
                             state.cursor = None;
                             state.feed_token = None;
                             state.feed_seen.clear();
@@ -246,6 +324,9 @@ impl GoogleObserver {
                     }
                 };
                 pages += 1;
+                state.feed_progress.received += 1;
+                let processing = activity.verifying(Step::Changes, Some(response.changes.len()));
+                let mut processed = 0;
                 for change in response.changes {
                     let Some(files) = &mut state.feed_files else {
                         break;
@@ -268,7 +349,11 @@ impl GoogleObserver {
                     if !accepted {
                         state.feed_files = None;
                     }
+                    processed += 1;
+                    state.feed_progress.processed += 1;
+                    processing.advance(processed);
                 }
+                processing.complete(processed);
                 if let Some(next) = response.next_page_token {
                     if state.feed_seen.len() >= 100_000
                         || next.is_empty()
@@ -276,6 +361,9 @@ impl GoogleObserver {
                         || !state.feed_seen.insert(next.clone())
                         || response.new_start_page_token.is_some()
                     {
+                        activity
+                            .verifying(Step::Recover(Recovery::InvalidContinuation), None)
+                            .finish(false);
                         return Err(RemoteObserverError::InvalidCursor);
                     }
                     state.feed_token = Some(next);
@@ -301,11 +389,19 @@ impl GoogleObserver {
                         })
                     {
                         // Missing or structural change evidence requires a scoped listing.
-                        state.capture = Some(self.begin(session).await?);
+                        let recovery =
+                            activity.verifying(Step::Recover(Recovery::CaptureRequired), None);
+                        let capture = self.begin(session, activity).await;
+                        recovery.finish(capture.is_ok());
+                        state.capture = Some(capture?);
                     } else {
-                        for (id, mut file) in files.unwrap_or_default() {
+                        let files = files.unwrap_or_default();
+                        let total = files.len();
+                        let normalizing = activity.verifying(Step::Normalize, Some(total));
+                        for (index, (id, mut file)) in files.into_iter().enumerate() {
                             let previous = state.known.get(&id);
-                            self.fill_sha256(session, &mut file, previous).await;
+                            self.fill_sha256(session, &mut file, previous, activity)
+                                .await;
                             let mut value = normalize::observation(
                                 file,
                                 &self.config,
@@ -314,7 +410,9 @@ impl GoogleObserver {
                             value.event.as_mut().unwrap().kind = observation_kind(previous, &value);
                             state.known.insert(id.clone(), value);
                             updated.insert(id);
+                            normalizing.advance(index + 1);
                         }
+                        normalizing.complete(total);
                         state.cursor = Some(next);
                     }
                     state.feed_token = None;
@@ -325,11 +423,14 @@ impl GoogleObserver {
             }
             if state.capture.is_none() {
                 let mut observations: Vec<RemoteObservation> = if state.feed_token.is_none() {
-                    state
+                    let total = state.known.len();
+                    let materializing = activity.verifying(Step::Normalize, Some(total));
+                    let observations = state
                         .known
                         .values()
                         .cloned()
-                        .map(|mut value| {
+                        .enumerate()
+                        .map(|(index, mut value)| {
                             // A drained change feed proves unchanged known metadata up to this checkpoint.
                             value.observed_at = super::super::scanner::now();
                             value.page_token = state.cursor.clone();
@@ -341,23 +442,31 @@ impl GoogleObserver {
                             {
                                 value.event.as_mut().unwrap().kind = ObservationKind::Snapshot;
                             }
+                            materializing.advance(index + 1);
                             value
                         })
-                        .collect()
+                        .collect();
+                    materializing.complete(total);
+                    observations
                 } else {
                     Vec::new()
                 };
                 if state.feed_token.is_none() {
-                    for id in &request.known_remote_ids {
+                    let total = request.known_remote_ids.len();
+                    let verifying = activity.verifying(Step::VerifyKnown, Some(total));
+                    for (index, id) in request.known_remote_ids.iter().enumerate() {
                         if !state.known.contains_key(id) && id != &self.config.remote_root_id {
-                            observations.push(self.probe(session, id.clone(), &state.known).await);
+                            observations.push(
+                                self.probe(session, id.clone(), &state.known, activity)
+                                    .await,
+                            );
                         }
+                        verifying.advance(index + 1);
                     }
+                    verifying.complete(total);
                 }
-                activity.position(true, || Position {
-                    path: None,
-                    items: state.known.len() as u64,
-                    pages,
+                activity.position(true, || {
+                    state.feed_progress.position(state.known.len(), pages)
                 });
                 return Ok(self.result(
                     observations,
@@ -368,9 +477,11 @@ impl GoogleObserver {
                     },
                     state.feed_token.clone().or(state.cursor.clone()),
                     state.feed_token.is_some(),
+                    activity,
                 ));
             }
         }
+        let mut first_full_page = true;
         while pages < budget {
             let State { capture, known, .. } = &mut *state;
             let capture = capture
@@ -383,75 +494,98 @@ impl GoogleObserver {
             if capture.pages_read >= 100_000 {
                 return Err(RemoteObserverError::IncompleteCoverage);
             }
-            activity.position(false, || Position {
-                path: remote_path(&parent, &self.config.remote_root_id, &capture.items),
-                items: capture.items.len() as u64,
-                pages: capture.pages_read as u64,
+            capture.pages_requested += 1;
+            activity.position(std::mem::take(&mut first_full_page), || {
+                capture.position(Some(&parent), &self.config.remote_root_id)
             });
             let _sample = crate::performance::Sample::begin("google_full_capture_page");
             let quote = parent.0.replace('\\', "\\\\").replace('\'', "\\'");
-            let response = self
-                .client
-                .files_list(
-                    session,
-                    FileListOptions {
-                        q: Some(format!("'{quote}' in parents and trashed = false")),
-                        page_token: capture.page.clone(),
-                        page_size: Some(100),
-                        supports_all_drives: Some(true),
-                        include_items_from_all_drives: Some(true),
-                        fields: Some(FieldMask(format!(
-                            "files({FIELDS}),nextPageToken,incompleteSearch"
-                        ))),
-                        ..Default::default()
-                    },
+            let response = activity
+                .response(
+                    Step::List,
+                    self.client.files_list(
+                        session,
+                        FileListOptions {
+                            q: Some(format!("'{quote}' in parents and trashed = false")),
+                            page_token: capture.page.clone(),
+                            page_size: Some(100),
+                            supports_all_drives: Some(true),
+                            include_items_from_all_drives: Some(true),
+                            fields: Some(FieldMask(format!(
+                                "files({FIELDS}),nextPageToken,incompleteSearch"
+                            ))),
+                            ..Default::default()
+                        },
+                    ),
                 )
                 .await
                 .map_err(failure)?;
             pages += 1;
             capture.pages_read += 1;
             if response.incomplete_search != Some(false) {
+                activity
+                    .verifying(Step::Recover(Recovery::Coverage), None)
+                    .finish(false);
                 state.capture = None;
                 state.cursor = None;
                 return Err(RemoteObserverError::IncompleteCoverage);
             }
             // Validate a page completely before advancing its continuation or staged identities.
-            let mut items = Vec::new();
-            let mut ids = BTreeSet::new();
-            for file in response.files {
-                let id = file
-                    .id
-                    .as_ref()
-                    .map(|id| RemoteId(id.0.clone()))
-                    .filter(|id| !id.0.is_empty())
-                    .ok_or(RemoteObserverError::IncompleteCoverage)?;
-                if id == self.config.remote_root_id
-                    || !ids.insert(id.clone())
-                    || capture.items.contains_key(&id)
-                    || !file
-                        .parents
+            let total = response.files.len();
+            let validating = activity.verifying(Step::ValidateItems, Some(total));
+            let validated = (|| {
+                let mut items = Vec::new();
+                let mut ids = BTreeSet::new();
+                for (index, file) in response.files.into_iter().enumerate() {
+                    let id = file
+                        .id
                         .as_ref()
-                        .is_some_and(|parents| parents.len() == 1 && parents[0].0 == parent.0)
-                    || file.trashed != Some(false)
-                {
-                    return Err(RemoteObserverError::IncompleteCoverage);
+                        .map(|id| RemoteId(id.0.clone()))
+                        .filter(|id| !id.0.is_empty())
+                        .ok_or(RemoteObserverError::IncompleteCoverage)?;
+                    if id == self.config.remote_root_id
+                        || !ids.insert(id.clone())
+                        || capture.items.contains_key(&id)
+                        || !file
+                            .parents
+                            .as_ref()
+                            .is_some_and(|parents| parents.len() == 1 && parents[0].0 == parent.0)
+                        || file.trashed != Some(false)
+                    {
+                        return Err(RemoteObserverError::IncompleteCoverage);
+                    }
+                    if file.mime_type.as_ref().map(|m| m.0.as_str()) == Some(FOLDER)
+                        && capture.visited.contains(&id)
+                    {
+                        return Err(RemoteObserverError::IncompleteCoverage);
+                    }
+                    if file.mime_type.as_ref().map(|m| m.0.as_str()) == Some(FOLDER)
+                        && !file
+                            .capabilities
+                            .as_ref()
+                            .is_some_and(|c| c.can_list_children == Some(true))
+                    {
+                        return Err(RemoteObserverError::IncompleteCoverage);
+                    }
+                    items.push((id, file));
+                    validating.advance(index + 1);
                 }
-                if file.mime_type.as_ref().map(|m| m.0.as_str()) == Some(FOLDER)
-                    && capture.visited.contains(&id)
-                {
-                    return Err(RemoteObserverError::IncompleteCoverage);
+                Ok(items)
+            })();
+            let items = match validated {
+                Ok(items) => {
+                    validating.complete(total);
+                    items
                 }
-                if file.mime_type.as_ref().map(|m| m.0.as_str()) == Some(FOLDER)
-                    && !file
-                        .capabilities
-                        .as_ref()
-                        .is_some_and(|c| c.can_list_children == Some(true))
-                {
-                    return Err(RemoteObserverError::IncompleteCoverage);
+                Err(error) => {
+                    validating.finish(false);
+                    return Err(error);
                 }
-                items.push((id, file));
-            }
+            };
             if capture.items.len() + items.len() > item_limit {
+                activity
+                    .verifying(Step::Recover(Recovery::Budget), None)
+                    .finish(false);
                 state.item_limit = state.item_limit.saturating_mul(2).min(1_600_000);
                 state.capture = None;
                 state.cursor = None;
@@ -462,11 +596,16 @@ impl GoogleObserver {
                     || capture.page.as_ref() == Some(next)
                     || !capture.pages.insert((parent.clone(), next.clone()))
                 {
+                    activity
+                        .verifying(Step::Recover(Recovery::InvalidContinuation), None)
+                        .finish(false);
                     return Err(RemoteObserverError::InvalidCursor);
                 }
             }
-            for (id, mut file) in items {
-                self.fill_sha256(session, &mut file, known.get(&id)).await;
+            let normalizing = activity.verifying(Step::Normalize, Some(total));
+            for (index, (id, mut file)) in items.into_iter().enumerate() {
+                self.fill_sha256(session, &mut file, known.get(&id), activity)
+                    .await;
                 if file.mime_type.as_ref().map(|m| m.0.as_str()) == Some(FOLDER) {
                     capture.visited.insert(id.clone());
                     capture.folders.push_back(id.clone());
@@ -475,7 +614,9 @@ impl GoogleObserver {
                     id,
                     normalize::observation(file, &self.config, ObservationCoverage::Partial)?,
                 );
+                normalizing.advance(index + 1);
             }
+            normalizing.complete(total);
             if let Some(next) = response.next_page_token {
                 capture.page = Some(next);
             } else {
@@ -490,12 +631,8 @@ impl GoogleObserver {
             .capture
             .as_ref()
             .ok_or(RemoteObserverError::IncompleteCoverage)?;
-        activity.position(true, || Position {
-            path: last_read_parent.as_ref().and_then(|parent| {
-                remote_path(parent, &self.config.remote_root_id, &capture.items)
-            }),
-            items: capture.items.len() as u64,
-            pages: capture.pages_read as u64,
+        activity.position(true, || {
+            capture.position(last_read_parent.as_ref(), &self.config.remote_root_id)
         });
         if !capture.folders.is_empty() {
             return Ok(self.result(
@@ -503,10 +640,11 @@ impl GoogleObserver {
                 ObservationCoverage::Partial,
                 Some(capture.checkpoint.clone()),
                 true,
+                activity,
             ));
         }
         // A missing listing entry does not distinguish trash, loss of access or a move.
-        self.root(session).await?;
+        self.root(session, activity).await?;
         let capture = state.capture.take().unwrap();
         let ids: BTreeSet<_> = state
             .known
@@ -515,17 +653,26 @@ impl GoogleObserver {
             .chain(request.known_remote_ids)
             .collect();
         if ids.len() > state.item_limit {
+            activity
+                .verifying(Step::Recover(Recovery::Budget), None)
+                .finish(false);
             state.item_limit = state.item_limit.saturating_mul(2).min(1_600_000);
             return Err(RemoteObserverError::IncompleteCoverage);
         }
         let mut observations = Vec::new();
-        for id in ids {
+        let total = ids.len();
+        let verifying = activity.verifying(Step::VerifyKnown, Some(total));
+        for (index, id) in ids.into_iter().enumerate() {
             if !capture.items.contains_key(&id) && id != self.config.remote_root_id {
-                observations.push(self.probe(session, id, &capture.items).await);
+                observations.push(self.probe(session, id, &capture.items, activity).await);
             }
+            verifying.advance(index + 1);
         }
+        verifying.complete(total);
         let mut next = capture.items;
-        for (id, value) in next.iter_mut() {
+        let total = next.len();
+        let building = activity.verifying(Step::Normalize, Some(total.saturating_mul(2)));
+        for (index, (id, value)) in next.iter_mut().enumerate() {
             value.coverage = ObservationCoverage::Complete;
             value.page_token = Some(capture.checkpoint.clone());
             value.event.as_mut().unwrap().kind = if !state.has_snapshot {
@@ -533,9 +680,14 @@ impl GoogleObserver {
             } else {
                 observation_kind(state.known.get(id), value)
             };
+            building.advance(index + 1);
         }
         // Publish a complete initial/recovery view, so every item receives the final coverage.
-        observations.extend(next.values().cloned());
+        observations.extend(next.values().cloned().enumerate().map(|(index, value)| {
+            building.advance(total + index + 1);
+            value
+        }));
+        building.complete(total * 2);
         state.known = next;
         state.has_snapshot = true;
         state.last_full = Some(Instant::now());
@@ -545,6 +697,7 @@ impl GoogleObserver {
             ObservationCoverage::Complete,
             state.cursor.clone(),
             false,
+            activity,
         ))
     }
     /// Fast path for a leaf with a known parent and no change to its observed ancestry.
@@ -581,6 +734,7 @@ impl GoogleObserver {
         session: &GoogleSession,
         file: &mut GoogleFile,
         previous: Option<&RemoteObservation>,
+        activity: RemoteActivity<'_>,
     ) {
         if file
             .name
@@ -601,7 +755,12 @@ impl GoogleObserver {
                 .then_some(checksum.value.as_str())
         });
         // Metadata remains available for diagnostics even when media verification fails.
-        let _ = self.client.fill_content_sha256(session, file, cached).await;
+        let _ = activity
+            .response(
+                Step::VerifyContent,
+                self.client.fill_content_sha256(session, file, cached),
+            )
+            .await;
     }
 
     /// A failed specific read is never evidence of deletion. Ancestry must reach an
@@ -611,6 +770,7 @@ impl GoogleObserver {
         session: &GoogleSession,
         id: RemoteId,
         captured: &BTreeMap<RemoteId, RemoteObservation>,
+        activity: RemoteActivity<'_>,
     ) -> RemoteObservation {
         let unavailable = |permission: bool| {
             let mut value = normalize::missing(id.clone(), &self.config);
@@ -625,15 +785,18 @@ impl GoogleObserver {
             value
         };
         let get = |id: RemoteId| async move {
-            self.client
-                .files_get(
-                    session,
-                    &FileId(id.0),
-                    FileGetOptions {
-                        fields: Some(FieldMask(FIELDS.into())),
-                        supports_all_drives: Some(true),
-                        ..Default::default()
-                    },
+            activity
+                .response(
+                    Step::Metadata,
+                    self.client.files_get(
+                        session,
+                        &FileId(id.0),
+                        FileGetOptions {
+                            fields: Some(FieldMask(FIELDS.into())),
+                            supports_all_drives: Some(true),
+                            ..Default::default()
+                        },
+                    ),
                 )
                 .await
         };
@@ -662,37 +825,52 @@ impl GoogleObserver {
         }
         let mut parents = value.parents.clone();
         let mut visited = BTreeSet::from([id.clone()]);
-        for _ in 0..128 {
-            let Evidence::Known(ids) = parents else {
-                return unavailable(false);
-            };
-            if ids.is_empty() {
-                value.state = FileState::OutsideScope;
-                return value;
-            }
-            if ids.len() != 1
-                || ids[0] == self.config.remote_root_id
-                || captured.contains_key(&ids[0])
-                || !visited.insert(ids[0].clone())
-            {
-                return unavailable(false);
-            }
-            let parent = match get(ids[0].clone()).await {
-                Ok(parent)
-                    if parent.id.as_ref().is_some_and(|value| value.0 == ids[0].0)
-                        && parent.trashed == Some(false) =>
-                {
-                    parent
+        let ancestry = activity.verifying(Step::Ancestry, None);
+        let mut resolved = 0;
+        let result = async {
+            for _ in 0..128 {
+                let Evidence::Known(ids) = parents else {
+                    return unavailable(false);
+                };
+                if ids.is_empty() {
+                    value.state = FileState::OutsideScope;
+                    return value;
                 }
-                Err(error) => return unavailable(error.kind == GoogleApiError::PermissionDenied),
-                _ => return unavailable(false),
-            };
-            parents = parent
-                .parents
-                .map(|ids| Evidence::Known(ids.into_iter().map(|id| RemoteId(id.0)).collect()))
-                .unwrap_or(Evidence::NotCollected);
+                if ids.len() != 1
+                    || ids[0] == self.config.remote_root_id
+                    || captured.contains_key(&ids[0])
+                    || !visited.insert(ids[0].clone())
+                {
+                    return unavailable(false);
+                }
+                let parent = match get(ids[0].clone()).await {
+                    Ok(parent)
+                        if parent.id.as_ref().is_some_and(|value| value.0 == ids[0].0)
+                            && parent.trashed == Some(false) =>
+                    {
+                        parent
+                    }
+                    Err(error) => {
+                        return unavailable(error.kind == GoogleApiError::PermissionDenied)
+                    }
+                    _ => return unavailable(false),
+                };
+                resolved += 1;
+                ancestry.advance(resolved);
+                parents = parent
+                    .parents
+                    .map(|ids| Evidence::Known(ids.into_iter().map(|id| RemoteId(id.0)).collect()))
+                    .unwrap_or(Evidence::NotCollected);
+            }
+            unavailable(false)
         }
-        unavailable(false)
+        .await;
+        if result.state == FileState::OutsideScope {
+            ancestry.complete(resolved);
+        } else {
+            ancestry.finish(false);
+        }
+        result
     }
     fn result(
         &self,
@@ -700,14 +878,18 @@ impl GoogleObserver {
         coverage: ObservationCoverage,
         cursor: Option<String>,
         has_more: bool,
+        activity: RemoteActivity<'_>,
     ) -> RemoteObserveResult {
+        let total = observations.len();
+        let filtering = activity.verifying(Step::ValidateItems, Some(total));
+        let observations = observations.into_iter().enumerate().filter_map(|(index, item)| {
+            let keep = !matches!(&item.name, Evidence::Known(name) if crate::projections::libreoffice_lock_name(name.as_ref()));
+            filtering.advance(index + 1);
+            keep.then_some(item)
+        }).collect();
+        filtering.complete(total);
         RemoteObserveResult {
-            observations: observations
-                .into_iter()
-                .filter(|item| {
-                    !matches!(&item.name, Evidence::Known(name) if crate::projections::libreoffice_lock_name(name.as_ref()))
-                })
-                .collect(),
+            observations,
             coverage,
             continuation: cursor.map(|value| ProviderCursor {
                 provider_id: self.config.provider_id.clone(),

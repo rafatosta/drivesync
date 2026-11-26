@@ -521,6 +521,7 @@ async fn remote(
     let mut invalidated = false;
     let mut generation = 0;
     let mut collection_epoch = None;
+    let mut collection: Option<ActivityGuard> = None;
     while !cancel.is_cancelled() && !handle.is_finished() {
         let activity = worker.begin(Source::Remote, Phase::Prepare, State::Running);
         if matches!(
@@ -533,7 +534,10 @@ async fn remote(
         // the original epoch until every page has been collected or the round fails.
         let epoch = *collection_epoch.get_or_insert_with(|| handle.collection_epoch());
         worker.scan_state(Source::Remote, SynchronizationScanState::Reading, None);
-        let observing = activity.child(
+        let collecting = collection
+            .get_or_insert_with(|| worker.begin(Source::Remote, Phase::Collect, State::Running));
+        collecting.set_state(State::Running);
+        let observing = collecting.child(
             Phase::Observe,
             State::Waiting(Wait::Worker),
             Details::default(),
@@ -574,7 +578,7 @@ async fn remote(
                     },
                     &session,
                     cancel,
-                    RemoteActivity::new(&observing),
+                    RemoteActivity::new(collecting),
                 )
                 .await
         };
@@ -605,6 +609,9 @@ async fn remote(
             Ok(result) => {
                 let complete = result.coverage == ObservationCoverage::Complete && !result.has_more;
                 if complete {
+                    if let Some(collection) = collection.take() {
+                        collection.finish(State::Complete);
+                    }
                     worker.scan_state(
                         Source::Remote,
                         SynchronizationScanState::Complete,
@@ -640,11 +647,17 @@ async fn remote(
                         Duration::from_secs(15)
                     }
                 } else {
+                    if let Some(collection) = &collection {
+                        collection.set_state(State::Waiting(Wait::Continuation));
+                    }
                     Duration::from_millis(50)
                 }
             }
             Err(RemoteObserverError::Cancelled) => break,
             Err(_) => {
+                if let Some(collection) = collection.take() {
+                    collection.finish(State::Failed);
+                }
                 collection_epoch = None;
                 worker.health(Source::Remote, false, true).await;
                 if !invalidated {

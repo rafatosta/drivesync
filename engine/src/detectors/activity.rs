@@ -32,6 +32,16 @@ pub(crate) enum Phase {
     Checksum,
     CompareSnapshots,
     BuildObservations,
+    Collect,
+    ValidateAccess,
+    Checkpoint,
+    ReadDirectory,
+    ReadChanges,
+    ValidateItems,
+    VerifyKnown,
+    ReadMetadata,
+    VerifyContent,
+    ResolveAncestry,
     Deliver,
     Idle,
 }
@@ -41,6 +51,9 @@ pub(crate) enum Wait {
     Worker,
     Ownership,
     Authorization,
+    ObserverState,
+    Provider,
+    Continuation,
     Queue,
     Refresh,
     Retry,
@@ -66,6 +79,12 @@ pub(crate) enum Unit {
     ChecksumsReused,
     ItemsCompared,
     PagesReceived,
+    PagesRequested,
+    ItemsCollected,
+    DirectoriesPending,
+    Changes,
+    ItemsChecked,
+    Ancestors,
     Bytes,
 }
 
@@ -93,6 +112,8 @@ pub(crate) enum Reason {
     NoCurrentWatch,
     BudgetReached,
     IncompleteObservation,
+    InvalidContinuation,
+    CaptureRequired,
 }
 
 /// Latest known details. Paths are root-relative display positions, with no provider identifiers.
@@ -423,7 +444,9 @@ impl ActivityPublisher {
             activity.sequence = sample.sequence;
             activity.updated = sample.at;
             activity.state = sample.value.state;
-            activity.details = sample.value.details;
+            if let Some(details) = sample.value.details {
+                activity.details = details;
+            }
             sample.value.scan.is_some_and(|scan| {
                 apply_scan(
                     self.source,
@@ -444,7 +467,7 @@ impl ActivityPublisher {
 
 struct Reported {
     state: State,
-    details: Details,
+    details: Option<Details>,
     scan: Option<ScanProgress>,
 }
 
@@ -475,7 +498,7 @@ impl ActivityGuard {
         if let Some(reporter) = &self.reporter {
             reporter.report(|| Reported {
                 state: State::Running,
-                details: details(),
+                details: Some(details()),
                 scan: None,
             });
         }
@@ -491,9 +514,19 @@ impl ActivityGuard {
                 let (details, scan) = details();
                 Reported {
                     state: State::Running,
-                    details,
+                    details: Some(details),
                     scan: Some(scan),
                 }
+            });
+        }
+    }
+
+    pub(crate) fn set_state(&self, state: State) {
+        if let Some(reporter) = &self.reporter {
+            reporter.publish(true, || Reported {
+                state,
+                details: None,
+                scan: None,
             });
         }
     }
@@ -502,7 +535,7 @@ impl ActivityGuard {
         if let Some(reporter) = &self.reporter {
             reporter.publish(true, || Reported {
                 state,
-                details: details(),
+                details: Some(details()),
                 scan: None,
             });
         }
