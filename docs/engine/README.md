@@ -8,7 +8,7 @@ The Engine owns account-scoped synchronization and exposes public application co
 | [Connection](connection/README.md) | Authentication and application lifecycle |
 | [Providers](providers/README.md) | Provider-specific external APIs |
 | [Detectors and Context](../OBSERVATION_SOURCES.md) | Scoped observations and inventory-enriched File models |
-| Inventory | Account-isolated persistent identities, baselines and operation evidence |
+| [Inventory](../INVENTORY.md) | Account-isolated persistence, typed activity reporting, baselines and operation evidence |
 | Analyzer | Pure decisions from File evidence; no I/O |
 | [Orchestrator](../ORCHESTRATOR.md) | Coordinates analysis, execution, recovery and public status |
 | [Operations](../OPERATIONS.md) | Verified effects, preconditions and persistence |

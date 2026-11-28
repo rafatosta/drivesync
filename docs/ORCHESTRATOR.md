@@ -140,6 +140,10 @@ count). The status supervisor consumes a scoped Detectors activity inbox and pro
 and remote scan summaries while the worker executes operations. The functional queue carries
 coverage and the other evidence needed for decisions. [Detector observability](OBSERVATION_SOURCES.md#detector-observability)
 
+The supervisor also consumes Inventory's independent bounded account/root inbox. Its activity
+snapshot stays internal and does not change the public synchronization status projection. See
+[Inventory observability](INVENTORY.md#observability-contract).
+
 `pending` identifies an unresolved observation wait separately from current work. Its `since`
 is the first publication of the same item and wait reason in the worker session; repeated
 analysis and source updates do not reset it. Attribute comparisons expose typed missing

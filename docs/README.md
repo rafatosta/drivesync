@@ -6,6 +6,7 @@
 - [Observation sources](OBSERVATION_SOURCES.md)
 - [Orchestrator and status](ORCHESTRATOR.md)
 - [Operations](OPERATIONS.md)
+- [Inventory](INVENTORY.md)
 - [Setup and configuration](SETUP_COMPLETION.md)
 - [Validation and known limitations](VALIDATION.md)
 
