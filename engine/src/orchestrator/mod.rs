@@ -32,7 +32,7 @@ use std::{
     io::Read,
     path::PathBuf,
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::{mpsc, watch, RwLock};
 const QUEUE_CAPACITY: usize = 32;
@@ -309,6 +309,8 @@ fn start_guarded(
     let inventory_inbox = inventory_activities.clone();
     tokio::spawn(async move {
         let mut task = task;
+        let mut lookup_promotion = tokio::time::interval(Duration::from_millis(100));
+        lookup_promotion.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let outcome = loop {
             tokio::select! {
                 biased;
@@ -325,6 +327,7 @@ fn start_guarded(
                 }
                 _ = operations_inbox.changed() => operations_inbox.consume(),
                 _ = inventory_inbox.changed() => inventory_inbox.consume(),
+                _ = lookup_promotion.tick() => inventory_inbox.promote_slow_lookups(),
             }
         };
         operations_inbox.close();

@@ -23,7 +23,6 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
     sync::{Mutex, MutexGuard, TryLockError},
-    time::{Duration, Instant},
 };
 
 /// Private storage location and account scope for one Inventory instance.
@@ -154,7 +153,10 @@ impl Inventory {
 
     /// Returns a conclusive result only when the database and scope were readable.
     pub(crate) fn lookup(&self, request: InventoryLookup) -> InventoryLookupResult {
-        let started = self.activity.as_ref().map(|_| Instant::now());
+        let mut lookup = self
+            .activity
+            .as_ref()
+            .and_then(|(inbox, origin)| inbox.begin_lookup(*origin));
         let result = if request.account_id != self.account_id {
             InventoryLookupResult::unavailable("Requested account is outside this Inventory scope.")
         } else {
@@ -172,21 +174,10 @@ impl Inventory {
                     ActivityLookupOutcome::Rejected
                 }
             };
-            inbox.record_lookup(outcome);
-        }
-        if let Some(started) =
-            started.filter(|started| started.elapsed() >= Duration::from_millis(200))
-        {
-            if let Some((inbox, origin)) = &self.activity {
-                if let Some(activity) = inbox.slow_lookup(*origin, started) {
-                    activity.finish(match result.status {
-                        models::InventoryLookupStatus::Found => ActivityState::Complete,
-                        models::InventoryLookupStatus::NotFound => ActivityState::NotFound,
-                        models::InventoryLookupStatus::Unavailable => ActivityState::Unavailable,
-                        models::InventoryLookupStatus::Ambiguous
-                        | models::InventoryLookupStatus::Error => ActivityState::Rejected,
-                    });
-                }
+            if let Some(lookup) = lookup.take() {
+                lookup.finish(outcome);
+            } else {
+                inbox.record_lookup(outcome);
             }
         }
         result
@@ -340,7 +331,10 @@ impl Inventory {
 mod access_tests {
     use super::*;
     use crate::models::SyncRootId;
-    use std::sync::Arc;
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     fn observed_inventory() -> (Arc<Inventory>, ActivityInbox, PathBuf) {
         let path = std::env::temp_dir().join(format!(

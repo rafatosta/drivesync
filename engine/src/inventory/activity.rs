@@ -16,6 +16,8 @@ use tokio::sync::Notify;
 
 const ACTIVE_LIMIT: usize = 128;
 const UPDATE_LIMIT: usize = 256;
+const LOOKUP_LIMIT: usize = 128;
+const SLOW_LOOKUP_THRESHOLD: Duration = Duration::from_millis(200);
 const LOOKUP_NOTIFICATION_INTERVAL: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,6 +129,15 @@ struct Latest {
     next_update: u64,
     diagnostic_cursor: u64,
     diagnostic_lookups: LookupSummary,
+    next_lookup: u64,
+    lookups_in_flight: Vec<LookupFlight>,
+}
+
+struct LookupFlight {
+    token: u64,
+    origin: Origin,
+    started: Instant,
+    activity: Option<ActivityId>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -190,6 +201,8 @@ impl ActivityInbox {
                 next_update: 0,
                 diagnostic_cursor: 0,
                 diagnostic_lookups: LookupSummary::default(),
+                next_lookup: 0,
+                lookups_in_flight: Vec::with_capacity(LOOKUP_LIMIT),
             }),
             changed: Notify::new(),
         }))
@@ -235,6 +248,7 @@ impl ActivityInbox {
     pub(crate) fn close(&self) {
         let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
         latest.closed = true;
+        latest.lookups_in_flight.clear();
         let active = std::mem::take(&mut latest.active);
         for mut activity in active {
             activity.state = State::Cancelled;
@@ -310,9 +324,6 @@ impl ActivityInbox {
     pub(crate) fn open(&self, origin: Origin) -> Option<Guard> {
         self.begin(origin, Kind::Open, Phase::OpenStorage)
     }
-    pub(crate) fn slow_lookup(&self, origin: Origin, started: Instant) -> Option<Guard> {
-        self.begin_at(origin, Kind::Lookup, Phase::Query, State::Running, started)
-    }
     pub(crate) fn enumerate(&self, origin: Origin) -> Option<Guard> {
         self.begin(origin, Kind::Enumerate, Phase::ReadRecords)
     }
@@ -323,20 +334,149 @@ impl ActivityInbox {
         self.begin(origin, Kind::Lease, Phase::Acquire)
     }
 
-    pub(crate) fn record_lookup(&self, outcome: LookupOutcome) {
+    pub(crate) fn begin_lookup(&self, origin: Origin) -> Option<LookupGuard> {
+        self.begin_lookup_at(origin, Instant::now())
+    }
+
+    fn begin_lookup_at(&self, origin: Origin, started: Instant) -> Option<LookupGuard> {
         let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
-        latest.lookups.record(outcome);
+        if latest.closed || latest.lookups_in_flight.len() >= LOOKUP_LIMIT {
+            latest.omitted = latest.omitted.saturating_add(1);
+            return None;
+        }
+        let Some(token) = latest.next_lookup.checked_add(1) else {
+            latest.omitted = latest.omitted.saturating_add(1);
+            return None;
+        };
+        latest.next_lookup = token;
+        latest.lookups_in_flight.push(LookupFlight {
+            token,
+            origin,
+            started,
+            activity: None,
+        });
+        Some(LookupGuard {
+            inbox: self.clone(),
+            token,
+            finished: false,
+        })
+    }
+
+    pub(crate) fn record_lookup(&self, outcome: LookupOutcome) {
+        self.finish_lookup(None, outcome);
+    }
+
+    pub(crate) fn promote_slow_lookups(&self) {
+        let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
+        if latest.closed {
+            return;
+        }
         let now = Instant::now();
-        let notify = latest
-            .lookups_notified_at
-            .is_none_or(|last| now.saturating_duration_since(last) >= LOOKUP_NOTIFICATION_INTERVAL);
-        if notify {
-            latest.lookups_notified_at = Some(now);
+        let mut promoted = false;
+        for index in 0..latest.lookups_in_flight.len() {
+            if latest.active.len() >= ACTIVE_LIMIT {
+                break;
+            }
+            let (origin, started, activity_id) = {
+                let flight = &latest.lookups_in_flight[index];
+                (flight.origin, flight.started, flight.activity)
+            };
+            if activity_id.is_some()
+                || now.saturating_duration_since(started) < SLOW_LOOKUP_THRESHOLD
+            {
+                continue;
+            }
+            let Some(next) = latest.next.checked_add(1) else {
+                latest.omitted = latest.omitted.saturating_add(1);
+                break;
+            };
+            latest.next = next;
+            let activity = Activity {
+                id: ActivityId(next),
+                parent: None,
+                correlation: None,
+                origin,
+                kind: Kind::Lookup,
+                phase: Phase::Query,
+                state: State::Running,
+                progress: None,
+                sequence: 0,
+                published_order: 0,
+                started,
+                updated: now,
+            };
+            latest.lookups_in_flight[index].activity = Some(activity.id);
+            latest.active.push(activity.clone());
+            latest.publish(activity);
+            promoted = true;
         }
         drop(latest);
-        if notify {
+        if promoted {
             self.0.changed.notify_one();
         }
+    }
+
+    fn finish_lookup(&self, token: Option<u64>, outcome: LookupOutcome) {
+        let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
+        latest.lookups.record(outcome);
+        let flight = token.and_then(|token| {
+            latest
+                .lookups_in_flight
+                .iter()
+                .position(|flight| flight.token == token)
+                .map(|index| latest.lookups_in_flight.remove(index))
+        });
+        let now = Instant::now();
+        let notify_summary = latest
+            .lookups_notified_at
+            .is_none_or(|last| now.saturating_duration_since(last) >= LOOKUP_NOTIFICATION_INTERVAL);
+        if notify_summary {
+            latest.lookups_notified_at = Some(now);
+        }
+        if let Some(activity_id) = flight.and_then(|flight| flight.activity) {
+            finish_locked(
+                &mut latest,
+                activity_id,
+                match outcome {
+                    LookupOutcome::Found => State::Complete,
+                    LookupOutcome::NotFound => State::NotFound,
+                    LookupOutcome::Rejected => State::Rejected,
+                    LookupOutcome::Unavailable => State::Unavailable,
+                },
+                Phase::Query,
+                None,
+                now,
+            );
+            drop(latest);
+            self.0.changed.notify_one();
+        } else {
+            drop(latest);
+            if notify_summary {
+                self.0.changed.notify_one();
+            }
+        }
+    }
+
+    fn cancel_lookup(&self, token: u64) {
+        let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
+        let flight = latest
+            .lookups_in_flight
+            .iter()
+            .position(|flight| flight.token == token)
+            .map(|index| latest.lookups_in_flight.remove(index));
+        let Some(activity_id) = flight.and_then(|flight| flight.activity) else {
+            return;
+        };
+        finish_locked(
+            &mut latest,
+            activity_id,
+            State::Cancelled,
+            Phase::Query,
+            None,
+            Instant::now(),
+        );
+        drop(latest);
+        self.0.changed.notify_one();
     }
 
     pub(crate) fn waiting_for_mutex(&self, origin: Origin) -> Option<Guard> {
@@ -350,19 +490,54 @@ impl ActivityInbox {
     }
 }
 
+pub(crate) struct LookupGuard {
+    inbox: ActivityInbox,
+    token: u64,
+    finished: bool,
+}
+
+impl LookupGuard {
+    pub(crate) fn finish(mut self, outcome: LookupOutcome) {
+        self.inbox.finish_lookup(Some(self.token), outcome);
+        self.finished = true;
+    }
+}
+
+impl Drop for LookupGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.inbox.cancel_lookup(self.token);
+        }
+    }
+}
+
+fn finish_locked(
+    latest: &mut Latest,
+    id: ActivityId,
+    state: State,
+    phase: Phase,
+    progress: Option<Progress>,
+    at: Instant,
+) -> bool {
+    let Some(index) = latest.active.iter().position(|activity| activity.id == id) else {
+        return false;
+    };
+    let mut activity = latest.active.remove(index);
+    activity.phase = phase;
+    activity.state = state;
+    activity.progress = progress;
+    activity.sequence = activity.sequence.saturating_add(1);
+    activity.updated = at;
+    latest.publish(activity);
+    true
+}
+
 impl Channel {
     fn finish(&self, id: ActivityId, state: State, phase: Phase, progress: Option<Progress>) {
         let mut latest = self.latest.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(index) = latest.active.iter().position(|activity| activity.id == id) else {
+        if !finish_locked(&mut latest, id, state, phase, progress, Instant::now()) {
             return;
-        };
-        let mut activity = latest.active.remove(index);
-        activity.phase = phase;
-        activity.state = state;
-        activity.progress = progress;
-        activity.sequence = activity.sequence.saturating_add(1);
-        activity.updated = Instant::now();
-        latest.publish(activity);
+        }
         drop(latest);
         self.changed.notify_one();
     }
@@ -608,6 +783,100 @@ mod tests {
             .unwrap();
         assert!(inbox.recent().is_empty());
         assert_eq!(inbox.lookup_summary().not_found, 1);
+    }
+
+    #[test]
+    fn short_lookup_completes_without_promoting_an_activity() {
+        let inbox = inbox();
+        let lookup = inbox.begin_lookup(Origin::Detectors).unwrap();
+        inbox.promote_slow_lookups();
+        assert!(inbox.current().is_empty());
+        lookup.finish(LookupOutcome::Found);
+        assert!(inbox.current().is_empty());
+        assert!(!inbox
+            .recent()
+            .iter()
+            .any(|activity| activity.kind == Kind::Lookup));
+        assert_eq!(inbox.lookup_summary().found, 1);
+    }
+
+    #[test]
+    fn slow_lookup_is_promoted_while_running_then_removed_on_completion() {
+        let inbox = inbox();
+        let started = Instant::now() - SLOW_LOOKUP_THRESHOLD - Duration::from_millis(1);
+        let lookup = inbox.begin_lookup_at(Origin::Operations, started).unwrap();
+        inbox.promote_slow_lookups();
+        let active = inbox.current();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].kind, Kind::Lookup);
+        assert_eq!(active[0].state, State::Running);
+        assert_eq!(active[0].origin, Origin::Operations);
+        assert_eq!(active[0].started, started);
+
+        lookup.finish(LookupOutcome::Unavailable);
+        assert!(inbox.current().is_empty());
+        assert!(inbox.recent().iter().any(|activity| {
+            activity.kind == Kind::Lookup && activity.state == State::Unavailable
+        }));
+        assert_eq!(inbox.lookup_summary().unavailable, 1);
+    }
+
+    #[test]
+    fn completion_racing_promotion_cannot_leave_a_stale_activity() {
+        let inbox = inbox();
+        let started = Instant::now() - SLOW_LOOKUP_THRESHOLD - Duration::from_millis(1);
+        let lookup = inbox.begin_lookup_at(Origin::Detectors, started).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let promote_inbox = inbox.clone();
+        let promote_barrier = barrier.clone();
+        let promoter = std::thread::spawn(move || {
+            promote_barrier.wait();
+            promote_inbox.promote_slow_lookups();
+        });
+        let finish_barrier = barrier.clone();
+        let finisher = std::thread::spawn(move || {
+            finish_barrier.wait();
+            lookup.finish(LookupOutcome::Found);
+        });
+        barrier.wait();
+        promoter.join().unwrap();
+        finisher.join().unwrap();
+        assert!(inbox.current().is_empty());
+        let lookup_updates = inbox
+            .recent()
+            .into_iter()
+            .filter(|activity| activity.kind == Kind::Lookup)
+            .collect::<Vec<_>>();
+        assert!(
+            lookup_updates.is_empty() || lookup_updates.last().unwrap().state == State::Complete
+        );
+        assert_eq!(inbox.lookup_summary().found, 1);
+    }
+
+    #[test]
+    fn tracking_capacity_and_inbox_closure_bound_slow_lookup_state() {
+        let inbox = inbox();
+        let started = Instant::now() - SLOW_LOOKUP_THRESHOLD - Duration::from_millis(1);
+        let lookups = (0..LOOKUP_LIMIT)
+            .map(|_| inbox.begin_lookup_at(Origin::Detectors, started).unwrap())
+            .collect::<Vec<_>>();
+        assert!(inbox.begin_lookup_at(Origin::Operations, started).is_none());
+        inbox.promote_slow_lookups();
+        let promoted = inbox.current();
+        assert_eq!(promoted.len(), ACTIVE_LIMIT);
+        inbox.close();
+        assert!(inbox.current().is_empty());
+        inbox.promote_slow_lookups();
+        for lookup in lookups {
+            lookup.finish(LookupOutcome::NotFound);
+        }
+        assert!(inbox.current().is_empty());
+        let updates = inbox.recent();
+        for activity in promoted {
+            assert!(updates
+                .iter()
+                .any(|update| { update.id == activity.id && update.state == State::Cancelled }));
+        }
     }
 
     #[test]
