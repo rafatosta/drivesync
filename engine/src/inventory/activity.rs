@@ -1245,6 +1245,56 @@ mod tests {
             }
             started.elapsed().as_nanos() / 100
         };
+        let measure_concurrent_readers_and_writer =
+            |inventory: &Inventory, mode: &str, round: u32| {
+                let started = Instant::now();
+                std::thread::scope(|scope| {
+                    for _ in 0..4 {
+                        let account = account.clone();
+                        scope.spawn(move || {
+                            for _ in 0..500 {
+                                std::hint::black_box(inventory.lookup(InventoryLookup {
+                                    account_id: account.clone(),
+                                    sync_root_id: SyncRootId("inventory-cost-root".into()),
+                                    item_id: Some(ItemId("item-000".into())),
+                                    remote_id: None,
+                                    local_identity: Evidence::NotCollected,
+                                    local_path: None,
+                                }));
+                            }
+                        });
+                    }
+                    let account = account.clone();
+                    let mode = mode.to_owned();
+                    scope.spawn(move || {
+                        for index in 0..32 {
+                            let item = format!("concurrent-{mode}-{round}-{index}");
+                            assert_eq!(
+                                inventory
+                                    .write(InventoryWrite {
+                                        operation_id: crate::models::Id(format!("write-{item}")),
+                                        item_id: ItemId(item.clone()),
+                                        identity: FileIdentity {
+                                            account_id: account.clone(),
+                                            sync_root_id: SyncRootId("inventory-cost-root".into()),
+                                            item_id: Some(ItemId(item)),
+                                            remote_id: None,
+                                            local_identity: Evidence::NotCollected,
+                                        },
+                                        expected_revision: Some(0),
+                                        effect: PersistedEffect::ItemRegistered {
+                                            local_path: None
+                                        },
+                                        recorded_at: DateTime { unix_millis: 2 },
+                                    })
+                                    .status,
+                                WriteStatus::Written
+                            );
+                        }
+                    });
+                });
+                started.elapsed().as_nanos()
+            };
         let (mut plain_samples, mut observed_samples, mut consumer_samples, mut paired_deltas) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for round in 0..7 {
@@ -1289,14 +1339,38 @@ mod tests {
         observed_enumeration_samples.sort_unstable();
         let plain_enumeration_ns = plain_enumeration_samples[3];
         let observed_enumeration_ns = observed_enumeration_samples[3];
+        let (mut plain_concurrent_samples, mut observed_concurrent_samples) =
+            (Vec::new(), Vec::new());
+        for round in 0..7 {
+            if round % 2 == 0 {
+                plain_concurrent_samples.push(measure_concurrent_readers_and_writer(
+                    &plain, "plain", round,
+                ));
+                observed_concurrent_samples.push(measure_concurrent_readers_and_writer(
+                    &observed, "observed", round,
+                ));
+            } else {
+                observed_concurrent_samples.push(measure_concurrent_readers_and_writer(
+                    &observed, "observed", round,
+                ));
+                plain_concurrent_samples.push(measure_concurrent_readers_and_writer(
+                    &plain, "plain", round,
+                ));
+            }
+        }
+        plain_concurrent_samples.sort_unstable();
+        observed_concurrent_samples.sort_unstable();
         eprintln!(
-            "inventory-observability-cost rounds=7 lookups_per_round={ITERATIONS} results=found,not_found plain_median_ns_per_lookup={plain_median} plain_range_ns_per_lookup={}..{} plain_p95_ns_per_lookup={} produced_median_ns_per_lookup={observed_median} produced_range_ns_per_lookup={}..{} produced_p95_ns_per_lookup={} produced_and_snapshots_median_ns_per_lookup={consumer_median} consumer_range_ns_per_lookup={}..{} consumer_p95_ns_per_lookup={} paired_median_delta_ns_per_lookup={paired_delta_median} paired_delta_range_ns_per_lookup={}..{} enumeration_rows={ENUMERATION_ROWS} plain_median_ns_per_enumeration={plain_enumeration_ns} plain_enumeration_range_ns={}..{} produced_median_ns_per_enumeration={observed_enumeration_ns} produced_enumeration_range_ns={}..{}",
+            "inventory-observability-cost rounds=7 lookups_per_round={ITERATIONS} results=found,not_found plain_median_ns_per_lookup={plain_median} plain_range_ns_per_lookup={}..{} plain_p95_ns_per_lookup={} produced_median_ns_per_lookup={observed_median} produced_range_ns_per_lookup={}..{} produced_p95_ns_per_lookup={} produced_and_snapshots_median_ns_per_lookup={consumer_median} consumer_range_ns_per_lookup={}..{} consumer_p95_ns_per_lookup={} paired_median_delta_ns_per_lookup={paired_delta_median} paired_delta_range_ns_per_lookup={}..{} enumeration_rows={ENUMERATION_ROWS} plain_median_ns_per_enumeration={plain_enumeration_ns} plain_enumeration_range_ns={}..{} produced_median_ns_per_enumeration={observed_enumeration_ns} produced_enumeration_range_ns={}..{} concurrent_workload=4_readers_500_found_each_plus_32_writes plain_median_total_ns={} plain_range_total_ns={}..{} observed_median_total_ns={} observed_range_total_ns={}..{}",
             plain_samples[0], plain_samples[6], plain_samples[6],
             observed_samples[0], observed_samples[6], observed_samples[6],
             consumer_samples[0], consumer_samples[6], consumer_samples[6],
             paired_deltas[0], paired_deltas[6],
             plain_enumeration_samples[0], plain_enumeration_samples[6],
             observed_enumeration_samples[0], observed_enumeration_samples[6],
+            plain_concurrent_samples[3], plain_concurrent_samples[0],
+            plain_concurrent_samples[6], observed_concurrent_samples[3],
+            observed_concurrent_samples[0], observed_concurrent_samples[6],
         );
         assert_eq!(
             plain.lookup(request()).status,

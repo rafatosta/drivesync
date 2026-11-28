@@ -111,23 +111,30 @@ not available in this harness.
 
 On 2026-11-28, the Flatpak GNOME 50 / Rust stable test harness ran seven alternating, warmed
 rounds of 10,000 lookups against a local SQLite fixture containing 64 registered records. Each
-round mixed found and not-found queries. Median wall time was 46,955 ns per lookup with reporting
-off, 48,229 ns with activity production and no snapshot reads, and 48,255 ns with activity
+round mixed found and not-found queries. Median wall time was 47,120 ns per lookup with reporting
+off, 48,585 ns with activity production and no snapshot reads, and 49,472 ns with activity
 production plus current/recent/summary snapshots every 100 lookups. The paired median difference
-for production versus no reporting was 1,118 ns per lookup (about 2.4% of this fixture's
-baseline). Across the seven samples, lookup ranges were 46,623–48,397 ns without reporting,
-47,699–59,060 ns with production, and 48,135–49,698 ns with production and snapshots. The nearest
+for production versus no reporting was 1,548 ns per lookup (about 3.3% of this fixture's
+baseline). Across the seven samples, lookup ranges were 46,976–48,794 ns without reporting,
+48,235–64,461 ns with production, and 48,224–58,024 ns with production and snapshots. The nearest
 rank p95 for each seven-sample set is its maximum. Seven alternating runs of 100 64-row
-enumerations measured medians of 803,295 ns without reporting and 827,968 ns with reporting;
-ranges were 794,962–964,395 ns and 822,471–875,037 ns respectively. These are local measurements,
-not proof of a general performance gain or regression; they include request construction and
-SQLite work and do not represent provider workloads.
+enumerations measured medians of 789,453 ns without reporting and 817,881 ns with reporting;
+ranges were 788,545–1,056,250 ns and 811,792–1,440,454 ns respectively.
+
+The same harness also ran seven alternating concurrent rounds with four readers performing 500
+found lookups each and one writer committing 32 individual registrations. Median total wall time
+was 241,203,327 ns without reporting and 289,348,461 ns with activity production; ranges were
+202,276,232–297,675,560 ns and 278,385,181–426,023,152 ns. The medians differ by about 20%, but
+the ranges overlap and vary widely. This is a signal to keep measuring under stable profiling
+conditions, not proof of a general regression. All results are local measurements; they include
+thread creation, request construction and SQLite work and do not represent provider workloads.
 
 This harness does not measure Orchestrator scheduling, diagnostic stderr output, CPU time,
-allocation count, or peak memory. There is no allocator profiler or process-metric harness
-available in the project SDK. Consumer snapshots model periodic mailbox reads but are not a
-full Orchestrator benchmark. Writes, concurrent reader/writer scaling, multiple-account aggregate
-cost, deliberate slow-consumer behavior, and throughput under saturation were not included in
-this performance run; functional saturation and isolation tests cover bounded behavior. These
-are remaining measurement limits. SDK validation does not establish installed-package or live
-provider integration.
+allocation count, or peak memory. The test harness has no per-workload CPU or memory profiler;
+process-wide counters would mix every benchmark arm in one test process. Allocation counts would
+also require an allocator profiler. Consumer snapshots model periodic mailbox reads but are not a
+full Orchestrator benchmark. The concurrent run covers one account and short reads/writes, not
+multiple-account aggregate scaling. Separate write-only throughput, deliberate slow-consumer
+behavior, and performance at channel saturation were not measured; functional saturation and
+isolation tests cover bounded behavior. These are remaining measurement limits. SDK validation
+does not establish installed-package or live provider integration.
