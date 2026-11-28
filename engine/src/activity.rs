@@ -133,6 +133,13 @@ impl<T> Recent<T> {
     pub(crate) fn take(&mut self) -> Vec<T> {
         self.entries.drain(..).collect()
     }
+
+    pub(crate) fn snapshot(&self) -> Vec<T>
+    where
+        T: Clone,
+    {
+        self.entries.iter().cloned().collect()
+    }
 }
 
 /// Bounds outstanding stderr work across scopes even when the output blocks.

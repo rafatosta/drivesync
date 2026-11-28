@@ -121,6 +121,7 @@ async fn assert_initial_download(
     let inventory = executor.inventory.clone();
     let context_config = || ContextConfig {
         inventory_directory: s.0.join("inventory"),
+        inventory_activity: None,
         account_id: config.account_id.clone(),
         provider_id: config.provider_id.clone(),
         sync_root_id: config.sync_root_id.clone(),

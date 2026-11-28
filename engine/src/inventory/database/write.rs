@@ -12,6 +12,16 @@ use super::{
 };
 
 pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWriteResult {
+    let mut rolled_back = false;
+    write_observed(db, request, None, &mut rolled_back)
+}
+
+pub(super) fn write_observed(
+    db: &mut Database,
+    request: InventoryWrite,
+    mut activity: Option<&mut super::super::activity::Guard>,
+    rolled_back: &mut bool,
+) -> InventoryWriteResult {
     let unavailable =
         || InventoryWriteResult::new(WriteStatus::Unavailable, None, request.recorded_at);
     if request.identity.account_id != db.account_id
@@ -24,6 +34,12 @@ pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWrit
         return InventoryWriteResult::new(WriteStatus::Rejected, None, request.recorded_at);
     }
 
+    if let Some(activity) = activity.as_deref_mut() {
+        activity.phase(
+            super::super::activity::Phase::Transaction,
+            super::super::activity::State::Running,
+        );
+    }
     let transaction = match db
         .connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -31,6 +47,7 @@ pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWrit
         Ok(transaction) => transaction,
         Err(_) => return unavailable(),
     };
+    *rolled_back = true;
     let stored = match current_snapshot(&transaction, &db.account_id.0, &request) {
         Ok(stored) => stored,
         Err(()) => return unavailable(),
@@ -111,6 +128,12 @@ pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWrit
             WriteStatus::Rejected,
             Some(current_revision),
             request.recorded_at,
+        );
+    }
+    if let Some(activity) = activity.as_deref_mut() {
+        activity.phase(
+            super::super::activity::Phase::Apply,
+            super::super::activity::State::Running,
         );
     }
 
@@ -196,9 +219,16 @@ pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWrit
     if persisted.is_err() {
         return unavailable();
     }
+    if let Some(activity) = activity {
+        activity.phase(
+            super::super::activity::Phase::Commit,
+            super::super::activity::State::Running,
+        );
+    }
     if transaction.commit().is_err() {
         return unavailable();
     }
+    *rolled_back = false;
     InventoryWriteResult::new(WriteStatus::Written, Some(revision), request.recorded_at)
 }
 

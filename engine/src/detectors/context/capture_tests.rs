@@ -284,6 +284,7 @@ fn reopened_records_are_revisited_and_remote_omission_is_unknown() {
     let before = context.snapshots().unwrap();
     let config = ContextConfig {
         inventory_directory: directory.clone(),
+        inventory_activity: None,
         account_id: context.config.account_id.clone(),
         provider_id: context.config.provider_id.clone(),
         sync_root_id: context.config.sync_root_id.clone(),

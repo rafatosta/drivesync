@@ -3,8 +3,16 @@
 //! The Inventory stores facts and transaction revisions only. It does not collect observations,
 //! analyze synchronization, or execute filesystem or provider operations.
 
+mod activity;
 mod database;
 pub(crate) mod models;
+
+pub(crate) use activity::{
+    Activity, ActivityInbox, LookupOutcome as ActivityLookupOutcome,
+    LookupSummary as ActivityLookupSummary, Origin as ActivityOrigin,
+    Persistence as ActivityPersistence, Phase as ActivityPhase, Scope as ActivityScope,
+    State as ActivityState,
+};
 
 use database::Database;
 use models::{
@@ -12,8 +20,10 @@ use models::{
     WriteStatus,
 };
 use std::{
+    ops::{Deref, DerefMut},
     path::PathBuf,
     sync::{Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 /// Private storage location and account scope for one Inventory instance.
@@ -31,6 +41,39 @@ pub(crate) struct InventoryConfig {
 pub(crate) struct Inventory {
     account_id: crate::models::AccountId,
     database: Mutex<Database>,
+    activity: Option<(ActivityInbox, ActivityOrigin)>,
+}
+
+struct DatabaseAccess<'a> {
+    database: Option<MutexGuard<'a, Database>>,
+    activity: Option<(ActivityInbox, ActivityOrigin, Duration)>,
+}
+
+impl Deref for DatabaseAccess<'_> {
+    type Target = Database;
+
+    fn deref(&self) -> &Self::Target {
+        self.database.as_deref().expect("database access is held")
+    }
+}
+
+impl DerefMut for DatabaseAccess<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.database
+            .as_deref_mut()
+            .expect("database access is held")
+    }
+}
+
+impl Drop for DatabaseAccess<'_> {
+    fn drop(&mut self) {
+        drop(self.database.take());
+        if let Some((inbox, origin, elapsed)) = self.activity.take() {
+            if elapsed >= Duration::from_millis(1) {
+                inbox.mutex_wait(origin, elapsed);
+            }
+        }
+    }
 }
 
 impl Inventory {
@@ -40,6 +83,31 @@ impl Inventory {
         Ok(Self {
             account_id: config.account_id,
             database: Mutex::new(database),
+            activity: None,
+        })
+    }
+
+    /// Opens the account database and reports its existing preparation work to the scoped inbox.
+    pub(crate) fn open_observed(
+        config: InventoryConfig,
+        inbox: ActivityInbox,
+        origin: ActivityOrigin,
+    ) -> Result<Self, InventoryError> {
+        let mut activity = inbox.open(origin);
+        if let Some(activity) = activity.as_mut() {
+            activity.phase(ActivityPhase::Prepare, ActivityState::Running);
+        }
+        let result = Self::open(config);
+        if let Some(activity) = activity {
+            activity.finish(if result.is_ok() {
+                ActivityState::Complete
+            } else {
+                ActivityState::Unavailable
+            });
+        }
+        result.map(|mut inventory| {
+            inventory.activity = Some((inbox, origin));
+            inventory
         })
     }
 
@@ -50,38 +118,80 @@ impl Inventory {
             fd::AsRawFd,
             unix::fs::{MetadataExt, OpenOptionsExt},
         };
-        let database = self.database().map_err(|_| InventoryError::Unavailable)?;
-        let path = database
-            .connection
-            .path()
-            .ok_or(InventoryError::Unavailable)?;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(path)
-            .map_err(|_| InventoryError::Unavailable)?;
-        let meta = file.metadata().map_err(|_| InventoryError::Unavailable)?;
-        if !meta.is_file()
-            || meta.uid() != unsafe { libc::geteuid() }
-            || meta.nlink() != 1
-            || unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0
-        {
-            return Err(InventoryError::Unavailable);
+        let activity = self
+            .activity
+            .as_ref()
+            .and_then(|(inbox, origin)| inbox.lease(*origin));
+        let result = (|| {
+            let database = self.database().map_err(|_| InventoryError::Unavailable)?;
+            let path = database
+                .connection
+                .path()
+                .ok_or(InventoryError::Unavailable)?;
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+                .open(path)
+                .map_err(|_| InventoryError::Unavailable)?;
+            let meta = file.metadata().map_err(|_| InventoryError::Unavailable)?;
+            if !meta.is_file()
+                || meta.uid() != unsafe { libc::geteuid() }
+                || meta.nlink() != 1
+                || unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0
+            {
+                return Err(InventoryError::Unavailable);
+            }
+            Ok(file)
+        })();
+        if let Some(mut activity) = activity {
+            if result.is_ok() {
+                activity.phase(ActivityPhase::Lease, ActivityState::Complete);
+                activity.finish(ActivityState::Complete);
+            } else {
+                activity.finish(ActivityState::Unavailable);
+            }
         }
-        Ok(file)
+        result
     }
 
     /// Returns a conclusive result only when the database and scope were readable.
     pub(crate) fn lookup(&self, request: InventoryLookup) -> InventoryLookupResult {
-        if request.account_id != self.account_id {
-            return InventoryLookupResult::unavailable(
-                "Requested account is outside this Inventory scope.",
-            );
+        let started = self.activity.as_ref().map(|_| Instant::now());
+        let result = if request.account_id != self.account_id {
+            InventoryLookupResult::unavailable("Requested account is outside this Inventory scope.")
+        } else {
+            match self.database() {
+                Ok(database) => database.lookup(request),
+                Err(()) => InventoryLookupResult::unavailable("Inventory is unavailable."),
+            }
+        };
+        if let Some((inbox, _)) = &self.activity {
+            let outcome = match result.status {
+                models::InventoryLookupStatus::Found => ActivityLookupOutcome::Found,
+                models::InventoryLookupStatus::NotFound => ActivityLookupOutcome::NotFound,
+                models::InventoryLookupStatus::Unavailable => ActivityLookupOutcome::Unavailable,
+                models::InventoryLookupStatus::Ambiguous | models::InventoryLookupStatus::Error => {
+                    ActivityLookupOutcome::Rejected
+                }
+            };
+            inbox.record_lookup(outcome);
         }
-        match self.database() {
-            Ok(database) => database.lookup(request),
-            Err(()) => InventoryLookupResult::unavailable("Inventory is unavailable."),
+        if let Some(started) =
+            started.filter(|started| started.elapsed() >= Duration::from_millis(200))
+        {
+            if let Some((inbox, origin)) = &self.activity {
+                if let Some(activity) = inbox.slow_lookup(*origin, started) {
+                    activity.finish(match result.status {
+                        models::InventoryLookupStatus::Found => ActivityState::Complete,
+                        models::InventoryLookupStatus::NotFound => ActivityState::NotFound,
+                        models::InventoryLookupStatus::Unavailable => ActivityState::Unavailable,
+                        models::InventoryLookupStatus::Ambiguous
+                        | models::InventoryLookupStatus::Error => ActivityState::Rejected,
+                    });
+                }
+            }
         }
+        result
     }
 
     /// Reads all facts in one account/root, failing rather than returning a partial view.
@@ -92,26 +202,105 @@ impl Inventory {
         if query.account_id != self.account_id {
             return Err(InventoryError::InvalidConfiguration);
         }
-        self.database()
-            .map_err(|_| InventoryError::Unavailable)?
-            .enumerate(query)
+        let mut activity = self
+            .activity
+            .as_ref()
+            .and_then(|(inbox, origin)| inbox.enumerate(*origin));
+        let result = match self.database() {
+            Ok(database) => database.enumerate_observed(query, activity.as_mut()),
+            Err(()) => Err(InventoryError::Unavailable),
+        };
+        if let Some(activity) = activity {
+            activity.finish(if result.is_ok() {
+                ActivityState::Complete
+            } else {
+                ActivityState::Unavailable
+            });
+        }
+        result
     }
 
     /// Atomically records a typed operation effect with optional optimistic revision checking.
     pub(crate) fn write(&self, request: InventoryWrite) -> InventoryWriteResult {
         let _sample = crate::performance::Sample::begin("inventory_write");
+        let mut activity = self.activity.as_ref().and_then(|(inbox, origin)| {
+            let persistence = match &request.effect {
+                models::PersistedEffect::ItemRegistered { .. } => ActivityPersistence::Identity,
+                models::PersistedEffect::ConvergenceConfirmed { .. }
+                | models::PersistedEffect::BaselineConfirmed { .. } => {
+                    ActivityPersistence::Baseline
+                }
+                models::PersistedEffect::Pending(_) => ActivityPersistence::PendingOperation,
+                models::PersistedEffect::RecoveryCheckpoint(_) => {
+                    ActivityPersistence::RecoveryCheckpoint
+                }
+                models::PersistedEffect::RecoveryObserved { .. } => {
+                    ActivityPersistence::RecoveryAssessment
+                }
+                models::PersistedEffect::OperationApplied(_) => {
+                    ActivityPersistence::OperationEffect
+                }
+                models::PersistedEffect::OperationConfirmed => {
+                    ActivityPersistence::OperationConfirmation
+                }
+                models::PersistedEffect::OperationFailed => ActivityPersistence::OperationFailure,
+                models::PersistedEffect::ConflictUpdated(_) => ActivityPersistence::Conflict,
+            };
+            inbox.write(*origin, persistence)
+        });
         if request.identity.account_id != self.account_id {
-            return InventoryWriteResult::new(WriteStatus::Rejected, None, request.recorded_at);
-        }
-        match self.database() {
-            Ok(mut database) => database.write(request),
-            Err(()) => {
-                InventoryWriteResult::new(WriteStatus::Unavailable, None, request.recorded_at)
+            let result =
+                InventoryWriteResult::new(WriteStatus::Rejected, None, request.recorded_at);
+            if let Some(activity) = activity {
+                activity.finish(ActivityState::Rejected);
             }
+            return result;
         }
+        let recorded_at = request.recorded_at;
+        let mut rolled_back = false;
+        let result = match self.database() {
+            Ok(mut database) => {
+                let (result, transaction_rolled_back) =
+                    database.write_observed(request, activity.as_mut());
+                rolled_back = transaction_rolled_back;
+                result
+            }
+            Err(()) => InventoryWriteResult::new(WriteStatus::Unavailable, None, recorded_at),
+        };
+        if let Some(mut activity) = activity {
+            if rolled_back {
+                activity.phase(ActivityPhase::Rollback, ActivityState::RolledBack);
+            }
+            activity.finish(match result.status {
+                WriteStatus::Written => ActivityState::Complete,
+                WriteStatus::RevisionConflict | WriteStatus::Rejected => ActivityState::Rejected,
+                WriteStatus::Unavailable if rolled_back => ActivityState::RolledBack,
+                WriteStatus::Unavailable => ActivityState::Unavailable,
+            });
+        }
+        result
     }
 
-    fn database(&self) -> Result<MutexGuard<'_, Database>, ()> {
-        self.database.lock().map_err(|_| ())
+    fn database(&self) -> Result<DatabaseAccess<'_>, ()> {
+        if self.activity.is_none() {
+            return self
+                .database
+                .lock()
+                .map(|database| DatabaseAccess {
+                    database: Some(database),
+                    activity: None,
+                })
+                .map_err(|_| ());
+        }
+        let started = Instant::now();
+        let database = self.database.lock().map_err(|_| ())?;
+        let activity = self
+            .activity
+            .as_ref()
+            .map(|(inbox, origin)| (inbox.clone(), *origin, started.elapsed()));
+        Ok(DatabaseAccess {
+            database: Some(database),
+            activity,
+        })
     }
 }

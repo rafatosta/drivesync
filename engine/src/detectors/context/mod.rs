@@ -14,7 +14,7 @@ use crate::{
     },
     inventory::{
         models::{Baseline, InventoryLookup, InventoryLookupStatus, LocalState, RemoteState},
-        Inventory, InventoryConfig,
+        ActivityOrigin, Inventory, InventoryConfig,
     },
     models::{Evidence, FileIdentity, FileState, ObservationOrigin, Path, SyncRootId},
 };
@@ -47,10 +47,16 @@ impl Context {
         {
             return Err(ContextError::InvalidConfiguration);
         }
-        let inventory = Inventory::open(InventoryConfig {
+        let inventory_config = InventoryConfig {
             directory: config.inventory_directory.clone(),
             account_id: config.account_id.clone(),
-        })
+        };
+        let inventory = match &config.inventory_activity {
+            Some(inbox) => {
+                Inventory::open_observed(inventory_config, inbox.clone(), ActivityOrigin::Detectors)
+            }
+            None => Inventory::open(inventory_config),
+        }
         .map_err(|_| ContextError::InventoryUnavailable)?;
         Ok(Self {
             inventory,

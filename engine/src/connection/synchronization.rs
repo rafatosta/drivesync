@@ -248,6 +248,11 @@ impl Engine {
                     let source_accounts = accounts.clone();
                     let source_client = client.clone();
                     let source_ownership = ownership.clone();
+                    let inventory_activities =
+                        crate::inventory::ActivityInbox::new(crate::inventory::ActivityScope {
+                            account: request.account_id.clone(),
+                            root: Some(root_id(&request)),
+                        });
                     #[cfg(test)]
                     let sources_enabled = inner.sources_enabled;
                     #[cfg(not(test))]
@@ -267,12 +272,15 @@ impl Engine {
                             &account.provider_user_id,
                         )?);
                         let scope = root_id(&request);
-                        let inventory =
-                            crate::inventory::Inventory::open(crate::inventory::InventoryConfig {
+                        let inventory = crate::inventory::Inventory::open_observed(
+                            crate::inventory::InventoryConfig {
                                 directory: directory.clone(),
                                 account_id: request.account_id.clone(),
-                            })
-                            .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
+                            },
+                            inventory_activities.clone(),
+                            crate::inventory::ActivityOrigin::Initialization,
+                        )
+                        .map_err(|_| error(SynchronizationErrorKind::InventoryUnavailable))?;
                         let has_inventory = !inventory
                             .enumerate(crate::inventory::models::InventoryScopeQuery {
                                 account_id: request.account_id.clone(),
@@ -291,6 +299,7 @@ impl Engine {
                         };
                         let detectors = Detectors::open(ContextConfig {
                             inventory_directory: directory.clone(),
+                            inventory_activity: Some(inventory_activities.clone()),
                             account_id: config.roots.account_id.clone(),
                             provider_id: config.provider_id.clone(),
                             sync_root_id: config.sync_root_id.clone(),
@@ -309,7 +318,10 @@ impl Engine {
                             client,
                             ownership,
                             writer.clone(),
-                            detectors.activity_inbox(),
+                            orchestrator::ActivityChannels {
+                                detectors: detectors.activity_inbox(),
+                                inventory: inventory_activities,
+                            },
                         )
                         .map_err(error)?;
                         Ok::<_, EngineError>(Session {

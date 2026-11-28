@@ -8,7 +8,10 @@ pub(crate) use crate::detectors::activity::Source;
 use crate::{
     accounts::Accounts,
     detectors::{activity::ActivityInbox, File, ObservationCoverage},
-    inventory::{models::WriteStatus, Inventory, InventoryConfig},
+    inventory::{
+        models::WriteStatus, Activity as InventoryActivity, ActivityInbox as InventoryInbox,
+        ActivityLookupSummary, ActivityOrigin, Inventory, InventoryConfig,
+    },
     models::{DateTime, Evidence, Id},
     providers::google::GoogleDriveClient,
     synchronization::*,
@@ -34,6 +37,11 @@ use std::{
 use tokio::sync::{mpsc, watch, RwLock};
 const QUEUE_CAPACITY: usize = 32;
 
+pub(crate) struct ActivityChannels {
+    pub(crate) detectors: ActivityInbox,
+    pub(crate) inventory: InventoryInbox,
+}
+
 /// Producer handle to a bounded per-account File queue. It exposes no Analyzer or Operator.
 pub(crate) struct OrchestratorHandle {
     config: OrchestratorConfig,
@@ -43,6 +51,7 @@ pub(crate) struct OrchestratorHandle {
     status: watch::Receiver<SynchronizationStatus>,
     detector_activities: ActivityInbox,
     operation_activities: OperationsInbox,
+    inventory_activities: InventoryInbox,
     capture_epoch: Arc<std::sync::atomic::AtomicU64>,
     local_refresh: Arc<tokio::sync::Notify>,
     remote_refresh: Arc<tokio::sync::Notify>,
@@ -50,6 +59,7 @@ pub(crate) struct OrchestratorHandle {
 impl Drop for OrchestratorHandle {
     fn drop(&mut self) {
         self.detector_activities.close();
+        self.inventory_activities.close();
         self.stop.send_replace(true);
     }
 }
@@ -86,6 +96,22 @@ impl OrchestratorHandle {
     #[allow(dead_code)]
     fn operation_activity(&self) -> Vec<OperationActivity> {
         self.operation_activities.current()
+    }
+
+    /// Internal Inventory snapshot for coordination diagnostics; never enters public status.
+    #[allow(dead_code)]
+    fn inventory_activity(
+        &self,
+    ) -> (
+        Vec<InventoryActivity>,
+        Vec<InventoryActivity>,
+        ActivityLookupSummary,
+    ) {
+        (
+            self.inventory_activities.current(),
+            self.inventory_activities.recent(),
+            self.inventory_activities.lookup_summary(),
+        )
     }
 
     pub(crate) fn subscribe(&self) -> SynchronizationSubscription {
@@ -145,17 +171,30 @@ pub(crate) fn open(
     client: GoogleDriveClient,
     ownership: Arc<RwLock<()>>,
     writer: Arc<dyn Send + Sync>,
-    detector_activities: ActivityInbox,
+    activity_channels: ActivityChannels,
 ) -> Result<OrchestratorHandle, SynchronizationErrorKind> {
+    let ActivityChannels {
+        detectors: detector_activities,
+        inventory: inventory_activities,
+    } = activity_channels;
     let scope = detector_activities.scope();
     if scope.account != config.roots.account_id || scope.root != config.sync_root_id {
         return Err(SynchronizationErrorKind::InvalidConfiguration);
     }
+    if inventory_activities.scope().account != config.roots.account_id
+        || inventory_activities.scope().root.as_ref() != Some(&config.sync_root_id)
+    {
+        return Err(SynchronizationErrorKind::InvalidConfiguration);
+    }
     let inventory = Arc::new(
-        Inventory::open(InventoryConfig {
-            directory,
-            account_id: config.roots.account_id.clone(),
-        })
+        Inventory::open_observed(
+            InventoryConfig {
+                directory,
+                account_id: config.roots.account_id.clone(),
+            },
+            inventory_activities.clone(),
+            ActivityOrigin::Operations,
+        )
         .map_err(|_| SynchronizationErrorKind::InventoryUnavailable)?,
     );
     let operator = operations::DefaultOperatorFactory::new(accounts, inventory, client)
@@ -180,7 +219,10 @@ pub(crate) fn open(
         ownership,
         QUEUE_CAPACITY,
         Some(writer),
-        detector_activities,
+        ActivityChannels {
+            detectors: detector_activities,
+            inventory: inventory_activities,
+        },
     ))
 }
 #[cfg(test)]
@@ -194,7 +236,21 @@ fn start(
         account: config.roots.account_id.clone(),
         root: config.sync_root_id.clone(),
     });
-    start_guarded(config, operator, ownership, capacity, None, inbox)
+    let inventory = InventoryInbox::new(crate::inventory::ActivityScope {
+        account: config.roots.account_id.clone(),
+        root: Some(config.sync_root_id.clone()),
+    });
+    start_guarded(
+        config,
+        operator,
+        ownership,
+        capacity,
+        None,
+        ActivityChannels {
+            detectors: inbox,
+            inventory,
+        },
+    )
 }
 fn start_guarded(
     config: OrchestratorConfig,
@@ -202,8 +258,12 @@ fn start_guarded(
     ownership: Arc<RwLock<()>>,
     capacity: usize,
     writer: Option<Arc<dyn Send + Sync>>,
-    detector_activities: ActivityInbox,
+    activity_channels: ActivityChannels,
 ) -> OrchestratorHandle {
+    let ActivityChannels {
+        detectors: detector_activities,
+        inventory: inventory_activities,
+    } = activity_channels;
     let mut initial = SynchronizationStatus::new(
         config.roots.account_id.clone(),
         SynchronizationState::Waiting,
@@ -246,6 +306,7 @@ fn start_guarded(
     });
     let activity_inbox = detector_activities.clone();
     let operations_inbox = operation_activities.clone();
+    let inventory_inbox = inventory_activities.clone();
     tokio::spawn(async move {
         let mut task = task;
         let outcome = loop {
@@ -263,10 +324,13 @@ fn start_guarded(
                     activity_inbox.flush_diagnostics();
                 }
                 _ = operations_inbox.changed() => operations_inbox.consume(),
+                _ = inventory_inbox.changed() => inventory_inbox.consume(),
             }
         };
         operations_inbox.close();
         operations_inbox.consume();
+        inventory_inbox.close();
+        inventory_inbox.consume();
         activity_inbox.close();
         activity_inbox.flush_diagnostics();
         if outcome.is_err() {
@@ -290,6 +354,7 @@ fn start_guarded(
         status: status_rx,
         detector_activities,
         operation_activities,
+        inventory_activities,
         capture_epoch,
         local_refresh,
         remote_refresh,

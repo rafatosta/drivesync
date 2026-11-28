@@ -2,8 +2,12 @@
 
 use crate::{
     detectors::observation::ObservationCoverage,
-    inventory::models::{
-        Baseline, ConflictState, InventoryLookupStatus, LocalState, PendingOperation, RemoteState,
+    inventory::{
+        models::{
+            Baseline, ConflictState, InventoryLookupStatus, LocalState, PendingOperation,
+            RemoteState,
+        },
+        ActivityInbox,
     },
     models::{
         AccountId, DateTime, Evidence, ObservationEvent, Path, ProviderId, RemoteId, SyncRootId,
@@ -19,6 +23,8 @@ pub(crate) struct PathRoot(pub PathBuf);
 pub(crate) struct ContextConfig {
     /// Private directory that contains per-account Inventory data.
     pub inventory_directory: PathBuf,
+    /// Shared account/root telemetry sink; Inventory remains the only event producer.
+    pub inventory_activity: Option<ActivityInbox>,
     /// Account identity for the configured synchronization.
     pub account_id: AccountId,
     /// Provider selected for the account.

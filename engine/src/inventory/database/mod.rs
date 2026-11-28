@@ -48,9 +48,18 @@ impl Database {
     }
 
     /// Enumerates a consistent scoped view, including unseen and pending items.
+    #[cfg(test)]
     pub(super) fn enumerate(
         &self,
         query: models::InventoryScopeQuery,
+    ) -> Result<Vec<models::InventorySnapshot>, models::InventoryError> {
+        self.enumerate_observed(query, None)
+    }
+
+    pub(super) fn enumerate_observed(
+        &self,
+        query: models::InventoryScopeQuery,
+        mut activity: Option<&mut super::activity::Guard>,
     ) -> Result<Vec<models::InventorySnapshot>, models::InventoryError> {
         if query.account_id != self.account_id || query.sync_root_id.0.trim().is_empty() {
             return Err(models::InventoryError::InvalidConfiguration);
@@ -71,6 +80,7 @@ impl Database {
             )
             .map_err(|_| models::InventoryError::Unavailable)?;
         let mut result = Vec::new();
+        let mut processed = 0u64;
         for row in rows {
             let (json, revision, item_id) = row.map_err(|_| models::InventoryError::Unavailable)?;
             let mut snapshot: models::InventorySnapshot =
@@ -84,13 +94,28 @@ impl Database {
             }
             snapshot.revision = revision as u64;
             result.push(snapshot);
+            processed = processed.saturating_add(1);
+            if let Some(activity) = activity.as_deref_mut() {
+                activity.progress(processed, None);
+            }
         }
         Ok(result)
     }
 
     /// Applies one write in an immediate SQLite transaction.
+    #[cfg(test)]
     pub(super) fn write(&mut self, request: InventoryWrite) -> InventoryWriteResult {
         write::write(self, request)
+    }
+
+    pub(super) fn write_observed(
+        &mut self,
+        request: InventoryWrite,
+        activity: Option<&mut super::activity::Guard>,
+    ) -> (InventoryWriteResult, bool) {
+        let mut rolled_back = false;
+        let result = write::write_observed(self, request, activity, &mut rolled_back);
+        (result, rolled_back)
     }
 }
 

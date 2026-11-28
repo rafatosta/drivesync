@@ -24,6 +24,7 @@ pub(super) fn context() -> (Context, PathBuf) {
     let _ = fs::remove_dir_all(&directory);
     let context = Context::open(ContextConfig {
         inventory_directory: directory.clone(),
+        inventory_activity: None,
         account_id: AccountId("account-a".into()),
         provider_id: ProviderId("google-drive".into()),
         sync_root_id: SyncRootId("root-a".into()),
