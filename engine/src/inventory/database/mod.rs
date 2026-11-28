@@ -44,7 +44,15 @@ impl Database {
 
     /// Reads one snapshot without treating SQL failures as confirmed absence.
     pub(super) fn lookup(&self, request: InventoryLookup) -> InventoryLookupResult {
-        lookup::lookup(self, request)
+        self.lookup_observed(request, &mut None)
+    }
+
+    pub(super) fn lookup_observed(
+        &self,
+        request: InventoryLookup,
+        sqlite_failure: &mut Option<super::activity::SqliteFailure>,
+    ) -> InventoryLookupResult {
+        lookup::lookup(self, request, sqlite_failure)
     }
 
     /// Enumerates a consistent scoped view, including unseen and pending items.
@@ -53,36 +61,53 @@ impl Database {
         &self,
         query: models::InventoryScopeQuery,
     ) -> Result<Vec<models::InventorySnapshot>, models::InventoryError> {
-        self.enumerate_observed(query, None)
+        self.enumerate_observed(query, None, &mut None)
     }
 
     pub(super) fn enumerate_observed(
         &self,
         query: models::InventoryScopeQuery,
         mut activity: Option<&mut super::activity::Guard>,
+        sqlite_failure: &mut Option<super::activity::SqliteFailure>,
     ) -> Result<Vec<models::InventorySnapshot>, models::InventoryError> {
         if query.account_id != self.account_id || query.sync_root_id.0.trim().is_empty() {
             return Err(models::InventoryError::InvalidConfiguration);
         }
-        let mut statement = self.connection.prepare(
+        let mut statement = match self.connection.prepare(
             "SELECT snapshot_json, revision, item_id FROM inventory_items WHERE account_id = ?1 AND sync_root_id = ?2 ORDER BY item_id"
-        ).map_err(|_| models::InventoryError::Unavailable)?;
-        let rows = statement
-            .query_map(
-                rusqlite::params![query.account_id.0, query.sync_root_id.0],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, i64>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                },
-            )
-            .map_err(|_| models::InventoryError::Unavailable)?;
+        ) {
+            Ok(statement) => statement,
+            Err(error) => {
+                *sqlite_failure = super::activity::SqliteFailure::classify(&error);
+                return Err(models::InventoryError::Unavailable);
+            }
+        };
+        let rows = match statement.query_map(
+            rusqlite::params![query.account_id.0, query.sync_root_id.0],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        ) {
+            Ok(rows) => rows,
+            Err(error) => {
+                *sqlite_failure = super::activity::SqliteFailure::classify(&error);
+                return Err(models::InventoryError::Unavailable);
+            }
+        };
         let mut result = Vec::new();
         let mut processed = 0u64;
         for row in rows {
-            let (json, revision, item_id) = row.map_err(|_| models::InventoryError::Unavailable)?;
+            let (json, revision, item_id) = match row {
+                Ok(record) => record,
+                Err(error) => {
+                    *sqlite_failure = super::activity::SqliteFailure::classify(&error);
+                    return Err(models::InventoryError::Unavailable);
+                }
+            };
             let mut snapshot: models::InventorySnapshot =
                 serde_json::from_str(&json).map_err(|_| models::InventoryError::Unavailable)?;
             if snapshot.identity.account_id != query.account_id
@@ -112,9 +137,11 @@ impl Database {
         &mut self,
         request: InventoryWrite,
         activity: Option<&mut super::activity::Guard>,
+        sqlite_failure: &mut Option<super::activity::SqliteFailure>,
     ) -> (InventoryWriteResult, bool) {
         let mut rolled_back = false;
-        let result = write::write_observed(self, request, activity, &mut rolled_back);
+        let result =
+            write::write_observed(self, request, activity, &mut rolled_back, sqlite_failure);
         (result, rolled_back)
     }
 }

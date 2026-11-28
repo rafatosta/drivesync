@@ -172,25 +172,33 @@ impl Inventory {
             .activity
             .as_ref()
             .and_then(|(inbox, origin)| inbox.begin_lookup_with_context(*origin, context));
+        let mut sqlite_failure = None;
         let result = if request.account_id != self.account_id {
             InventoryLookupResult::unavailable("Requested account is outside this Inventory scope.")
         } else {
             match self.database() {
-                Ok(database) => database.lookup(request),
+                Ok(database) => database.lookup_observed(request, &mut sqlite_failure),
                 Err(()) => InventoryLookupResult::unavailable("Inventory is unavailable."),
             }
         };
         if let Some((inbox, _)) = &self.activity {
-            let outcome = match result.status {
-                models::InventoryLookupStatus::Found => ActivityLookupOutcome::Found,
-                models::InventoryLookupStatus::NotFound => ActivityLookupOutcome::NotFound,
-                models::InventoryLookupStatus::Unavailable => ActivityLookupOutcome::Unavailable,
-                models::InventoryLookupStatus::Ambiguous | models::InventoryLookupStatus::Error => {
-                    ActivityLookupOutcome::Rejected
+            let outcome = if sqlite_failure.is_some() {
+                ActivityLookupOutcome::SqliteFailure
+            } else {
+                match result.status {
+                    models::InventoryLookupStatus::Found => ActivityLookupOutcome::Found,
+                    models::InventoryLookupStatus::NotFound => ActivityLookupOutcome::NotFound,
+                    models::InventoryLookupStatus::Unavailable => {
+                        ActivityLookupOutcome::Unavailable
+                    }
+                    models::InventoryLookupStatus::Ambiguous
+                    | models::InventoryLookupStatus::Error => ActivityLookupOutcome::Rejected,
                 }
             };
             if let Some(lookup) = lookup.take() {
-                lookup.finish(outcome);
+                lookup.finish(outcome, sqlite_failure);
+            } else if let Some(failure) = sqlite_failure {
+                inbox.record_lookup_failure(failure);
             } else {
                 inbox.record_lookup(outcome);
             }
@@ -218,16 +226,22 @@ impl Inventory {
             .activity
             .as_ref()
             .and_then(|(inbox, origin)| inbox.enumerate(*origin, context));
+        let mut sqlite_failure = None;
         let result = match self.database() {
-            Ok(database) => database.enumerate_observed(query, activity.as_mut()),
+            Ok(database) => {
+                database.enumerate_observed(query, activity.as_mut(), &mut sqlite_failure)
+            }
             Err(()) => Err(InventoryError::Unavailable),
         };
         if let Some(activity) = activity {
-            activity.finish(if result.is_ok() {
-                ActivityState::Complete
-            } else {
-                ActivityState::Unavailable
-            });
+            activity.finish_with_sqlite_failure(
+                if result.is_ok() {
+                    ActivityState::Complete
+                } else {
+                    ActivityState::Unavailable
+                },
+                sqlite_failure,
+            );
         }
         result
     }
@@ -278,10 +292,11 @@ impl Inventory {
         }
         let recorded_at = request.recorded_at;
         let mut rolled_back = false;
+        let mut sqlite_failure = None;
         let result = match self.database() {
             Ok(mut database) => {
                 let (result, transaction_rolled_back) =
-                    database.write_observed(request, activity.as_mut());
+                    database.write_observed(request, activity.as_mut(), &mut sqlite_failure);
                 rolled_back = transaction_rolled_back;
                 result
             }
@@ -291,12 +306,17 @@ impl Inventory {
             if rolled_back {
                 activity.phase(ActivityPhase::Rollback, ActivityState::RolledBack);
             }
-            activity.finish(match result.status {
-                WriteStatus::Written => ActivityState::Complete,
-                WriteStatus::RevisionConflict | WriteStatus::Rejected => ActivityState::Rejected,
-                WriteStatus::Unavailable if rolled_back => ActivityState::RolledBack,
-                WriteStatus::Unavailable => ActivityState::Unavailable,
-            });
+            activity.finish_with_sqlite_failure(
+                match result.status {
+                    WriteStatus::Written => ActivityState::Complete,
+                    WriteStatus::RevisionConflict | WriteStatus::Rejected => {
+                        ActivityState::Rejected
+                    }
+                    WriteStatus::Unavailable if rolled_back => ActivityState::RolledBack,
+                    WriteStatus::Unavailable => ActivityState::Unavailable,
+                },
+                sqlite_failure,
+            );
         }
         result
     }
@@ -454,6 +474,37 @@ mod access_tests {
         assert!(inbox.recent().iter().any(|activity| {
             activity.kind == activity::Kind::Access && activity.state == ActivityState::Failed
         }));
+        drop(inventory);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn sqlite_busy_during_lookup_is_counted_without_changing_the_result() {
+        use crate::models::{Evidence, RemoteId};
+        use models::{InventoryLookup, InventoryLookupStatus};
+
+        let (inventory, inbox, path) = observed_inventory();
+        let database_path = inventory
+            .database()
+            .unwrap()
+            .connection
+            .path()
+            .unwrap()
+            .to_owned();
+        let locker = rusqlite::Connection::open(database_path).unwrap();
+        locker.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        let result = inventory.lookup(InventoryLookup {
+            account_id: inventory.account_id.clone(),
+            sync_root_id: SyncRootId("access-test-root".into()),
+            item_id: None,
+            remote_id: Some(RemoteId("locked-record".into())),
+            local_identity: Evidence::NotCollected,
+            local_path: None,
+        });
+        locker.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(result.status, InventoryLookupStatus::Error);
+        assert_eq!(result.reason.as_deref(), Some("Inventory lookup failed."));
+        assert_eq!(inbox.lookup_summary().sqlite_busy, 1);
         drop(inventory);
         std::fs::remove_dir_all(path).unwrap();
     }

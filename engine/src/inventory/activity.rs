@@ -59,6 +59,27 @@ pub(crate) enum LookupOutcome {
     NotFound,
     Rejected,
     Unavailable,
+    SqliteFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SqliteFailure {
+    Busy(i32),
+    Locked(i32),
+    Other(i32),
+}
+
+impl SqliteFailure {
+    pub(crate) fn classify(error: &rusqlite::Error) -> Option<Self> {
+        let rusqlite::Error::SqliteFailure(code, _) = error else {
+            return None;
+        };
+        Some(match code.code {
+            rusqlite::ErrorCode::DatabaseBusy => Self::Busy(code.extended_code),
+            rusqlite::ErrorCode::DatabaseLocked => Self::Locked(code.extended_code),
+            _ => Self::Other(code.extended_code),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +125,7 @@ pub(crate) struct Activity {
     pub identity: ActivityReference,
     pub parent: Option<ActivityReference>,
     pub correlation: Option<CorrelationReference>,
+    pub sqlite_failure: Option<SqliteFailure>,
     pub origin: Origin,
     pub kind: Kind,
     pub phase: Phase,
@@ -152,18 +174,32 @@ pub(crate) struct LookupSummary {
     pub not_found: u64,
     pub rejected: u64,
     pub unavailable: u64,
+    pub sqlite_busy: u64,
+    pub sqlite_locked: u64,
+    pub sqlite_other: u64,
 }
 
 impl LookupSummary {
-    fn record(&mut self, outcome: LookupOutcome) {
+    fn record(&mut self, outcome: LookupOutcome, failure: Option<SqliteFailure>) {
         self.total = self.total.saturating_add(1);
         let count = match outcome {
-            LookupOutcome::Found => &mut self.found,
-            LookupOutcome::NotFound => &mut self.not_found,
-            LookupOutcome::Rejected => &mut self.rejected,
-            LookupOutcome::Unavailable => &mut self.unavailable,
+            LookupOutcome::Found => Some(&mut self.found),
+            LookupOutcome::NotFound => Some(&mut self.not_found),
+            LookupOutcome::Rejected => Some(&mut self.rejected),
+            LookupOutcome::Unavailable => Some(&mut self.unavailable),
+            LookupOutcome::SqliteFailure => None,
         };
-        *count = count.saturating_add(1);
+        if let Some(count) = count {
+            *count = count.saturating_add(1);
+        }
+        if let Some(failure) = failure {
+            let count = match failure {
+                SqliteFailure::Busy(_) => &mut self.sqlite_busy,
+                SqliteFailure::Locked(_) => &mut self.sqlite_locked,
+                SqliteFailure::Other(_) => &mut self.sqlite_other,
+            };
+            *count = count.saturating_add(1);
+        }
     }
 }
 
@@ -241,13 +277,7 @@ impl ActivityInbox {
 
     pub(crate) fn lookup_summary(&self) -> LookupSummary {
         let latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
-        LookupSummary {
-            total: latest.lookups.total,
-            found: latest.lookups.found,
-            not_found: latest.lookups.not_found,
-            rejected: latest.lookups.rejected,
-            unavailable: latest.lookups.unavailable,
-        }
+        latest.lookups
     }
 
     pub(crate) fn close(&self) {
@@ -321,6 +351,7 @@ impl ActivityInbox {
             identity: self.identity(id),
             parent: parent.cloned(),
             correlation: correlation.cloned(),
+            sqlite_failure: None,
             origin,
             kind,
             phase,
@@ -424,7 +455,11 @@ impl ActivityInbox {
     }
 
     pub(crate) fn record_lookup(&self, outcome: LookupOutcome) {
-        self.finish_lookup(None, outcome);
+        self.finish_lookup(None, outcome, None);
+    }
+
+    pub(crate) fn record_lookup_failure(&self, failure: SqliteFailure) {
+        self.finish_lookup(None, LookupOutcome::SqliteFailure, Some(failure));
     }
 
     pub(crate) fn promote_slow_lookups(&self) {
@@ -465,6 +500,7 @@ impl ActivityInbox {
                     .and_then(|context| context.parent.as_ref())
                     .filter(|reference| self.compatible(reference))
                     .cloned(),
+                sqlite_failure: None,
                 correlation: context
                     .as_ref()
                     .and_then(|context| context.correlation.as_ref())
@@ -491,9 +527,14 @@ impl ActivityInbox {
         }
     }
 
-    fn finish_lookup(&self, token: Option<u64>, outcome: LookupOutcome) {
+    fn finish_lookup(
+        &self,
+        token: Option<u64>,
+        outcome: LookupOutcome,
+        failure: Option<SqliteFailure>,
+    ) {
         let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
-        latest.lookups.record(outcome);
+        latest.lookups.record(outcome, failure);
         let flight = token.and_then(|token| {
             latest
                 .lookups_in_flight
@@ -516,10 +557,11 @@ impl ActivityInbox {
                     LookupOutcome::Found => State::Complete,
                     LookupOutcome::NotFound => State::NotFound,
                     LookupOutcome::Rejected => State::Rejected,
-                    LookupOutcome::Unavailable => State::Unavailable,
+                    LookupOutcome::Unavailable | LookupOutcome::SqliteFailure => State::Unavailable,
                 },
                 Phase::Query,
                 None,
+                failure,
                 now,
             );
             drop(latest);
@@ -548,6 +590,7 @@ impl ActivityInbox {
             State::Cancelled,
             Phase::Query,
             None,
+            None,
             Instant::now(),
         );
         drop(latest);
@@ -573,8 +616,8 @@ pub(crate) struct LookupGuard {
 }
 
 impl LookupGuard {
-    pub(crate) fn finish(mut self, outcome: LookupOutcome) {
-        self.inbox.finish_lookup(Some(self.token), outcome);
+    pub(crate) fn finish(mut self, outcome: LookupOutcome, failure: Option<SqliteFailure>) {
+        self.inbox.finish_lookup(Some(self.token), outcome, failure);
         self.finished = true;
     }
 }
@@ -593,6 +636,7 @@ fn finish_locked(
     state: State,
     phase: Phase,
     progress: Option<Progress>,
+    sqlite_failure: Option<SqliteFailure>,
     at: Instant,
 ) -> bool {
     let Some(index) = latest.active.iter().position(|activity| activity.id == id) else {
@@ -602,6 +646,7 @@ fn finish_locked(
     activity.phase = phase;
     activity.state = state;
     activity.progress = progress;
+    activity.sqlite_failure = sqlite_failure;
     activity.sequence = activity.sequence.saturating_add(1);
     activity.updated = at;
     latest.publish(activity);
@@ -609,9 +654,24 @@ fn finish_locked(
 }
 
 impl Channel {
-    fn finish(&self, id: ActivityId, state: State, phase: Phase, progress: Option<Progress>) {
+    fn finish(
+        &self,
+        id: ActivityId,
+        state: State,
+        phase: Phase,
+        progress: Option<Progress>,
+        failure: Option<SqliteFailure>,
+    ) {
         let mut latest = self.latest.lock().unwrap_or_else(|e| e.into_inner());
-        if !finish_locked(&mut latest, id, state, phase, progress, Instant::now()) {
+        if !finish_locked(
+            &mut latest,
+            id,
+            state,
+            phase,
+            progress,
+            failure,
+            Instant::now(),
+        ) {
             return;
         }
         drop(latest);
@@ -658,7 +718,7 @@ impl Channel {
             .filter(|activity| activity.published_order > cursor)
         {
             let elapsed = activity.updated.saturating_duration_since(activity.started);
-            let _ = writeln!(stderr, "drivesync-inventory scope={} account={:016x} root={} activity={} parent={:?} correlation={:?} origin={:?} kind={:?} phase={:?} state={:?} sequence={} elapsed_ms={} progress={:?}", self.label, hash_label(&self.scope.account.0), self.scope.root.as_ref().map(|root| format!("{:016x}", hash_label(&root.0))).unwrap_or_else(|| "account".into()), activity.id.0, activity.parent, activity.correlation, activity.origin, activity.kind, activity.phase, activity.state, activity.sequence, elapsed.as_millis(), activity.progress);
+            let _ = writeln!(stderr, "drivesync-inventory scope={} account={:016x} root={} activity={} parent={:?} correlation={:?} origin={:?} kind={:?} phase={:?} state={:?} sqlite_failure={:?} sequence={} elapsed_ms={} progress={:?}", self.label, hash_label(&self.scope.account.0), self.scope.root.as_ref().map(|root| format!("{:016x}", hash_label(&root.0))).unwrap_or_else(|| "account".into()), activity.id.0, activity.parent, activity.correlation, activity.origin, activity.kind, activity.phase, activity.state, activity.sqlite_failure, activity.sequence, elapsed.as_millis(), activity.progress);
             last_written = last_written.max(activity.published_order);
         }
         let lookup_delta = LookupSummary {
@@ -671,12 +731,21 @@ impl Channel {
             unavailable: lookups
                 .unavailable
                 .saturating_sub(diagnostic_lookups.unavailable),
+            sqlite_busy: lookups
+                .sqlite_busy
+                .saturating_sub(diagnostic_lookups.sqlite_busy),
+            sqlite_locked: lookups
+                .sqlite_locked
+                .saturating_sub(diagnostic_lookups.sqlite_locked),
+            sqlite_other: lookups
+                .sqlite_other
+                .saturating_sub(diagnostic_lookups.sqlite_other),
         };
         if omitted != 0 || lookup_delta.total != 0 || overwritten != 0 {
             let _ = writeln!(
                 stderr,
-                "drivesync-inventory scope={} omitted={} overwritten={} lookups={} found={} not_found={} rejected={} unavailable={}",
-                self.label, omitted, overwritten, lookup_delta.total, lookup_delta.found, lookup_delta.not_found, lookup_delta.rejected, lookup_delta.unavailable
+                "drivesync-inventory scope={} omitted={} overwritten={} lookups={} found={} not_found={} rejected={} unavailable={} sqlite_busy={} sqlite_locked={} sqlite_other={}",
+                self.label, omitted, overwritten, lookup_delta.total, lookup_delta.found, lookup_delta.not_found, lookup_delta.rejected, lookup_delta.unavailable, lookup_delta.sqlite_busy, lookup_delta.sqlite_locked, lookup_delta.sqlite_other
             );
         }
         drop(stderr);
@@ -718,8 +787,18 @@ impl Guard {
         }
     }
 
-    pub(crate) fn finish(mut self, state: State) {
-        self.inbox.0.finish(self.id, state, self.phase, None);
+    pub(crate) fn finish(self, state: State) {
+        self.finish_with_sqlite_failure(state, None);
+    }
+
+    pub(crate) fn finish_with_sqlite_failure(
+        mut self,
+        state: State,
+        failure: Option<SqliteFailure>,
+    ) {
+        self.inbox
+            .0
+            .finish(self.id, state, self.phase, None, failure);
         self.closed = true;
     }
 }
@@ -729,7 +808,7 @@ impl Drop for Guard {
         if !self.closed {
             self.inbox
                 .0
-                .finish(self.id, State::Cancelled, self.phase, None);
+                .finish(self.id, State::Cancelled, self.phase, None, None);
         }
     }
 }
@@ -849,6 +928,47 @@ mod tests {
         assert_eq!(summary.unavailable, 1);
     }
 
+    #[test]
+    fn sqlite_error_codes_preserve_busy_locked_and_extended_classification() {
+        let busy_code = rusqlite::ffi::SQLITE_BUSY | (1 << 8);
+        let locked_code = rusqlite::ffi::SQLITE_LOCKED | (2 << 8);
+        let busy = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(busy_code), None);
+        let locked = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(locked_code), None);
+        assert_eq!(
+            SqliteFailure::classify(&busy),
+            Some(SqliteFailure::Busy(busy_code))
+        );
+        assert_eq!(
+            SqliteFailure::classify(&locked),
+            Some(SqliteFailure::Locked(locked_code))
+        );
+
+        let summary_inbox = inbox();
+        summary_inbox.record_lookup_failure(SqliteFailure::Busy(busy_code));
+        summary_inbox.record_lookup_failure(SqliteFailure::Locked(locked_code));
+        let summary = summary_inbox.lookup_summary();
+        assert_eq!(summary.total, 2);
+        assert_eq!(summary.sqlite_busy, 1);
+        assert_eq!(summary.sqlite_locked, 1);
+        assert_eq!(summary.sqlite_other, 0);
+
+        let slow_inbox = inbox();
+        let started = Instant::now() - SLOW_LOOKUP_THRESHOLD - Duration::from_millis(1);
+        let lookup = slow_inbox
+            .begin_lookup_at(Origin::Detectors, started, None)
+            .unwrap();
+        slow_inbox.promote_slow_lookups();
+        lookup.finish(
+            LookupOutcome::SqliteFailure,
+            Some(SqliteFailure::Busy(busy_code)),
+        );
+        assert!(slow_inbox.recent().iter().any(|activity| {
+            activity.kind == Kind::Lookup
+                && activity.state == State::Unavailable
+                && activity.sqlite_failure == Some(SqliteFailure::Busy(busy_code))
+        }));
+    }
+
     #[tokio::test]
     async fn lookup_summary_notifies_without_per_query_activity_records() {
         let inbox = inbox();
@@ -917,7 +1037,7 @@ mod tests {
         let lookup = inbox.begin_lookup(Origin::Detectors).unwrap();
         inbox.promote_slow_lookups();
         assert!(inbox.current().is_empty());
-        lookup.finish(LookupOutcome::Found);
+        lookup.finish(LookupOutcome::Found, None);
         assert!(inbox.current().is_empty());
         assert!(!inbox
             .recent()
@@ -941,7 +1061,7 @@ mod tests {
         assert_eq!(active[0].origin, Origin::Operations);
         assert_eq!(active[0].started, started);
 
-        lookup.finish(LookupOutcome::Unavailable);
+        lookup.finish(LookupOutcome::Unavailable, None);
         assert!(inbox.current().is_empty());
         assert!(inbox.recent().iter().any(|activity| {
             activity.kind == Kind::Lookup && activity.state == State::Unavailable
@@ -966,7 +1086,7 @@ mod tests {
         let finish_barrier = barrier.clone();
         let finisher = std::thread::spawn(move || {
             finish_barrier.wait();
-            lookup.finish(LookupOutcome::Found);
+            lookup.finish(LookupOutcome::Found, None);
         });
         barrier.wait();
         promoter.join().unwrap();
@@ -1004,7 +1124,7 @@ mod tests {
         assert!(inbox.current().is_empty());
         inbox.promote_slow_lookups();
         for lookup in lookups {
-            lookup.finish(LookupOutcome::NotFound);
+            lookup.finish(LookupOutcome::NotFound, None);
         }
         assert!(inbox.current().is_empty());
         let updates = inbox.recent();

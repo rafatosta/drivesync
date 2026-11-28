@@ -8,8 +8,13 @@ use super::{
     models::{InventoryLookup, InventoryLookupResult, InventoryLookupStatus, InventorySnapshot},
     Database,
 };
+use crate::inventory::activity::SqliteFailure;
 
-pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookupResult {
+pub(super) fn lookup(
+    db: &Database,
+    request: InventoryLookup,
+    sqlite_failure: &mut Option<SqliteFailure>,
+) -> InventoryLookupResult {
     if request.account_id != db.account_id {
         return InventoryLookupResult::unavailable(
             "Requested account is outside this Inventory scope.",
@@ -31,10 +36,10 @@ pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookup
     let scope = (&request.account_id.0, &request.sync_root_id.0);
     let add_result = |set: rusqlite::Result<BTreeSet<i64>>,
                       matches: &mut Vec<BTreeSet<i64>>|
-     -> Result<(), ()> { set.map(|ids| matches.push(ids)).map_err(|_| ()) };
+     -> rusqlite::Result<()> { set.map(|ids| matches.push(ids)) };
 
     if let Some(item_id) = &request.item_id {
-        if add_result(
+        if let Err(error) = add_result(
             ids_for(
                 db,
                 "SELECT record_id FROM inventory_items
@@ -42,14 +47,13 @@ pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookup
                 params![scope.0, scope.1, item_id.0],
             ),
             &mut key_matches,
-        )
-        .is_err()
-        {
+        ) {
+            *sqlite_failure = SqliteFailure::classify(&error);
             return lookup_error();
         }
     }
     if let Some(remote_id) = &request.remote_id {
-        if add_result(
+        if let Err(error) = add_result(
             ids_for(
                 db,
                 "SELECT record_id FROM inventory_items
@@ -57,14 +61,13 @@ pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookup
                 params![scope.0, scope.1, remote_id.0],
             ),
             &mut key_matches,
-        )
-        .is_err()
-        {
+        ) {
+            *sqlite_failure = SqliteFailure::classify(&error);
             return lookup_error();
         }
     }
     if let Evidence::Known(identity) = &request.local_identity {
-        if add_result(
+        if let Err(error) = add_result(
             ids_for(
                 db,
                 "SELECT record_id FROM inventory_items
@@ -80,9 +83,8 @@ pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookup
                 ],
             ),
             &mut key_matches,
-        )
-        .is_err()
-        {
+        ) {
+            *sqlite_failure = SqliteFailure::classify(&error);
             return lookup_error();
         }
     }
@@ -97,7 +99,7 @@ pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookup
                 );
             }
         };
-        if add_result(
+        if let Err(error) = add_result(
             ids_for(
                 db,
                 "SELECT record_id FROM inventory_items
@@ -105,9 +107,8 @@ pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookup
                 params![scope.0, scope.1, bytes],
             ),
             &mut key_matches,
-        )
-        .is_err()
-        {
+        ) {
+            *sqlite_failure = SqliteFailure::classify(&error);
             return lookup_error();
         }
     }
@@ -145,7 +146,8 @@ pub(super) fn lookup(db: &Database, request: InventoryLookup) -> InventoryLookup
     );
     let (json, revision) = match record {
         Ok(record) => record,
-        Err(_) => {
+        Err(error) => {
+            *sqlite_failure = SqliteFailure::classify(&error);
             return InventoryLookupResult::new(
                 InventoryLookupStatus::Error,
                 None,

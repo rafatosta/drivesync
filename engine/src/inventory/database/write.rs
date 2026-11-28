@@ -3,6 +3,7 @@
 use crate::models::{Evidence, FileIdentity};
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 
+use super::super::activity::SqliteFailure;
 use super::{
     models::{
         BaselineState, InventorySnapshot, InventoryWrite, InventoryWriteResult, OperationState,
@@ -13,7 +14,7 @@ use super::{
 
 pub(super) fn write(db: &mut Database, request: InventoryWrite) -> InventoryWriteResult {
     let mut rolled_back = false;
-    write_observed(db, request, None, &mut rolled_back)
+    write_observed(db, request, None, &mut rolled_back, &mut None)
 }
 
 pub(super) fn write_observed(
@@ -21,6 +22,7 @@ pub(super) fn write_observed(
     request: InventoryWrite,
     mut activity: Option<&mut super::super::activity::Guard>,
     rolled_back: &mut bool,
+    sqlite_failure: &mut Option<SqliteFailure>,
 ) -> InventoryWriteResult {
     let unavailable =
         || InventoryWriteResult::new(WriteStatus::Unavailable, None, request.recorded_at);
@@ -45,10 +47,13 @@ pub(super) fn write_observed(
         .transaction_with_behavior(TransactionBehavior::Immediate)
     {
         Ok(transaction) => transaction,
-        Err(_) => return unavailable(),
+        Err(error) => {
+            record_sqlite_failure(sqlite_failure, &error);
+            return unavailable();
+        }
     };
     *rolled_back = true;
-    let stored = match current_snapshot(&transaction, &db.account_id.0, &request) {
+    let stored = match current_snapshot(&transaction, &db.account_id.0, &request, sqlite_failure) {
         Ok(stored) => stored,
         Err(()) => return unavailable(),
     };
@@ -99,11 +104,20 @@ pub(super) fn write_observed(
         ..
     } = &request.effect
     {
-        let current = transaction.query_row(
+        let parent_record = transaction.query_row(
             "SELECT snapshot_json, revision FROM inventory_items WHERE account_id = ?1 AND sync_root_id = ?2 AND item_id = ?3",
             params![request.identity.account_id.0,request.identity.sync_root_id.0,parent.item_id.0],
             |row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?)),
-        ).ok().and_then(|(json,revision)| serde_json::from_str::<InventorySnapshot>(&json).ok().map(|snapshot|(snapshot,revision)));
+        );
+        let current = match parent_record {
+            Ok((json, revision)) => serde_json::from_str::<InventorySnapshot>(&json)
+                .ok()
+                .map(|snapshot| (snapshot, revision)),
+            Err(error) => {
+                record_sqlite_failure(sqlite_failure, &error);
+                None
+            }
+        };
         if !current.is_some_and(|(snapshot, revision)| {
             revision > 0
                 && snapshot.identity.account_id == request.identity.account_id
@@ -170,6 +184,9 @@ pub(super) fn write_observed(
     let collision: rusqlite::Result<bool> = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM inventory_items WHERE account_id = ?1 AND sync_root_id = ?2 AND item_id <> ?3 AND ((?4 IS NOT NULL AND remote_id = ?4) OR (?5 IS NOT NULL AND local_path = ?5)))",
         params![request.identity.account_id.0,request.identity.sync_root_id.0,request.item_id.0,indexes.remote_id,indexes.local_path], |row| row.get(0));
+    if let Err(error) = &collision {
+        record_sqlite_failure(sqlite_failure, error);
+    }
     if !matches!(collision, Ok(false)) {
         return InventoryWriteResult::new(
             WriteStatus::RevisionConflict,
@@ -216,7 +233,8 @@ pub(super) fn write_observed(
             ],
         )
     };
-    if persisted.is_err() {
+    if let Err(error) = &persisted {
+        record_sqlite_failure(sqlite_failure, error);
         return unavailable();
     }
     if let Some(activity) = activity {
@@ -225,7 +243,8 @@ pub(super) fn write_observed(
             super::super::activity::State::Running,
         );
     }
-    if transaction.commit().is_err() {
+    if let Err(error) = transaction.commit() {
+        record_sqlite_failure(sqlite_failure, &error);
         return unavailable();
     }
     *rolled_back = false;
@@ -236,6 +255,7 @@ fn current_snapshot(
     transaction: &Transaction<'_>,
     account_id: &str,
     request: &InventoryWrite,
+    sqlite_failure: &mut Option<SqliteFailure>,
 ) -> Result<Option<(i64, u64, InventorySnapshot)>, ()> {
     let row = transaction
         .query_row(
@@ -255,13 +275,21 @@ fn current_snapshot(
             },
         )
         .optional()
-        .map_err(|_| ())?;
+        .map_err(|error| {
+            record_sqlite_failure(sqlite_failure, &error);
+        })?;
     row.map(|(id, revision, json)| {
         let snapshot = serde_json::from_str(&json).map_err(|_| ())?;
         let revision = u64::try_from(revision).map_err(|_| ())?;
         Ok((id, revision, snapshot))
     })
     .transpose()
+}
+
+fn record_sqlite_failure(target: &mut Option<SqliteFailure>, error: &rusqlite::Error) {
+    if let Some(failure) = SqliteFailure::classify(error) {
+        *target = Some(failure);
+    }
 }
 
 fn identity_matches_scope(
