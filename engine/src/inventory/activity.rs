@@ -1138,12 +1138,16 @@ mod tests {
     #[test]
     fn repeated_short_lookup_cost_with_and_without_activity_reporting() {
         use crate::inventory::{
-            models::{InventoryLookup, InventoryLookupStatus},
+            models::{
+                InventoryLookup, InventoryLookupStatus, InventoryScopeQuery, InventoryWrite,
+                PersistedEffect, WriteStatus,
+            },
             Inventory, InventoryConfig,
         };
-        use crate::models::{Evidence, RemoteId};
+        use crate::models::{DateTime, Evidence, FileIdentity, ItemId, RemoteId};
 
         const ITERATIONS: u32 = 10_000;
+        const ENUMERATION_ROWS: u32 = 64;
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1165,11 +1169,41 @@ mod tests {
         });
         let observed =
             Inventory::open_observed(config(), inbox.clone(), Origin::Detectors).unwrap();
+        for index in 0..ENUMERATION_ROWS {
+            let item = format!("item-{index:03}");
+            assert_eq!(
+                plain
+                    .write(InventoryWrite {
+                        operation_id: crate::models::Id(format!("seed-{item}")),
+                        item_id: ItemId(item.clone()),
+                        identity: FileIdentity {
+                            account_id: account.clone(),
+                            sync_root_id: SyncRootId("inventory-cost-root".into()),
+                            item_id: Some(ItemId(item)),
+                            remote_id: Some(RemoteId(format!("remote-{index:03}"))),
+                            local_identity: Evidence::NotCollected,
+                        },
+                        expected_revision: Some(0),
+                        effect: PersistedEffect::ItemRegistered { local_path: None },
+                        recorded_at: DateTime { unix_millis: 1 },
+                    })
+                    .status,
+                WriteStatus::Written
+            );
+        }
         let request = || InventoryLookup {
             account_id: account.clone(),
             sync_root_id: SyncRootId("inventory-cost-root".into()),
             item_id: None,
             remote_id: Some(RemoteId("missing-record".into())),
+            local_identity: Evidence::NotCollected,
+            local_path: None,
+        };
+        let found_request = || InventoryLookup {
+            account_id: account.clone(),
+            sync_root_id: SyncRootId("inventory-cost-root".into()),
+            item_id: Some(ItemId("item-000".into())),
+            remote_id: None,
             local_identity: Evidence::NotCollected,
             local_path: None,
         };
@@ -1183,38 +1217,86 @@ mod tests {
                 InventoryLookupStatus::NotFound
             );
         }
-        let measure = |inventory: &Inventory| {
+        let measure_lookups = |inventory: &Inventory, consume_snapshots: bool| {
             let started = Instant::now();
-            for _ in 0..ITERATIONS {
-                std::hint::black_box(inventory.lookup(request()).status);
+            for index in 0..ITERATIONS {
+                let input = if index % 2 == 0 {
+                    found_request()
+                } else {
+                    request()
+                };
+                std::hint::black_box(inventory.lookup(input).status);
+                if consume_snapshots && index % 100 == 99 {
+                    std::hint::black_box(inbox.current());
+                    std::hint::black_box(inbox.recent());
+                    std::hint::black_box(inbox.lookup_summary());
+                }
             }
             started.elapsed().as_nanos() / u128::from(ITERATIONS)
         };
-        let (mut plain_samples, mut observed_samples, mut paired_deltas) =
-            (Vec::new(), Vec::new(), Vec::new());
+        let measure_enumerations = |inventory: &Inventory| {
+            let query = InventoryScopeQuery {
+                account_id: account.clone(),
+                sync_root_id: SyncRootId("inventory-cost-root".into()),
+            };
+            let started = Instant::now();
+            for _ in 0..100 {
+                std::hint::black_box(inventory.enumerate(query.clone()).unwrap());
+            }
+            started.elapsed().as_nanos() / 100
+        };
+        let (mut plain_samples, mut observed_samples, mut consumer_samples, mut paired_deltas) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for round in 0..7 {
             if round % 2 == 0 {
-                let plain_sample = measure(&plain);
-                let observed_sample = measure(&observed);
+                let plain_sample = measure_lookups(&plain, false);
+                let observed_sample = measure_lookups(&observed, false);
+                let consumer_sample = measure_lookups(&observed, true);
                 plain_samples.push(plain_sample);
                 observed_samples.push(observed_sample);
+                consumer_samples.push(consumer_sample);
                 paired_deltas.push(observed_sample as i128 - plain_sample as i128);
             } else {
-                let observed_sample = measure(&observed);
-                let plain_sample = measure(&plain);
+                let consumer_sample = measure_lookups(&observed, true);
+                let observed_sample = measure_lookups(&observed, false);
+                let plain_sample = measure_lookups(&plain, false);
                 observed_samples.push(observed_sample);
                 plain_samples.push(plain_sample);
+                consumer_samples.push(consumer_sample);
                 paired_deltas.push(observed_sample as i128 - plain_sample as i128);
             }
         }
         plain_samples.sort_unstable();
         observed_samples.sort_unstable();
+        consumer_samples.sort_unstable();
         paired_deltas.sort_unstable();
         let plain_median = plain_samples[plain_samples.len() / 2];
         let observed_median = observed_samples[observed_samples.len() / 2];
+        let consumer_median = consumer_samples[consumer_samples.len() / 2];
         let paired_delta_median = paired_deltas[paired_deltas.len() / 2];
+        let (mut plain_enumeration_samples, mut observed_enumeration_samples) =
+            (Vec::new(), Vec::new());
+        for round in 0..7 {
+            if round % 2 == 0 {
+                plain_enumeration_samples.push(measure_enumerations(&plain));
+                observed_enumeration_samples.push(measure_enumerations(&observed));
+            } else {
+                observed_enumeration_samples.push(measure_enumerations(&observed));
+                plain_enumeration_samples.push(measure_enumerations(&plain));
+            }
+        }
+        plain_enumeration_samples.sort_unstable();
+        observed_enumeration_samples.sort_unstable();
+        let plain_enumeration_ns = plain_enumeration_samples[3];
+        let observed_enumeration_ns = observed_enumeration_samples[3];
         eprintln!(
-            "inventory-observability-cost rounds=7 lookups_per_round={ITERATIONS} plain_median_ns_per_lookup={plain_median} observed_median_ns_per_lookup={observed_median} paired_median_delta_ns_per_lookup={paired_delta_median}"
+            "inventory-observability-cost rounds=7 lookups_per_round={ITERATIONS} results=found,not_found plain_median_ns_per_lookup={plain_median} plain_range_ns_per_lookup={}..{} plain_p95_ns_per_lookup={} produced_median_ns_per_lookup={observed_median} produced_range_ns_per_lookup={}..{} produced_p95_ns_per_lookup={} produced_and_snapshots_median_ns_per_lookup={consumer_median} consumer_range_ns_per_lookup={}..{} consumer_p95_ns_per_lookup={} paired_median_delta_ns_per_lookup={paired_delta_median} paired_delta_range_ns_per_lookup={}..{} enumeration_rows={ENUMERATION_ROWS} plain_median_ns_per_enumeration={plain_enumeration_ns} plain_enumeration_range_ns={}..{} produced_median_ns_per_enumeration={observed_enumeration_ns} produced_enumeration_range_ns={}..{}",
+            plain_samples[0], plain_samples[6], plain_samples[6],
+            observed_samples[0], observed_samples[6], observed_samples[6],
+            consumer_samples[0], consumer_samples[6], consumer_samples[6],
+            paired_deltas[0], paired_deltas[6],
+            plain_enumeration_samples[0], plain_enumeration_samples[6],
+            observed_enumeration_samples[0], observed_enumeration_samples[6],
         );
         assert_eq!(
             plain.lookup(request()).status,
