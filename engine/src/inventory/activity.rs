@@ -62,6 +62,7 @@ pub(crate) enum Phase {
     OpenStorage,
     Prepare,
     Acquire,
+    Access,
     Query,
     ReadRecords,
     Validate,
@@ -338,19 +339,14 @@ impl ActivityInbox {
         }
     }
 
-    pub(crate) fn mutex_wait(&self, origin: Origin, elapsed: Duration) {
-        let started = Instant::now()
-            .checked_sub(elapsed)
-            .unwrap_or_else(Instant::now);
-        if let Some(activity) = self.begin_at(
+    pub(crate) fn waiting_for_mutex(&self, origin: Origin) -> Option<Guard> {
+        self.begin_at(
             origin,
             Kind::Access,
             Phase::Acquire,
             State::WaitingForMutex,
-            started,
-        ) {
-            activity.finish(State::Complete);
-        }
+            Instant::now(),
+        )
     }
 }
 

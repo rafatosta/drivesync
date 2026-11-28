@@ -22,7 +22,7 @@ use models::{
 use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
-    sync::{Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, TryLockError},
     time::{Duration, Instant},
 };
 
@@ -46,7 +46,7 @@ pub(crate) struct Inventory {
 
 struct DatabaseAccess<'a> {
     database: Option<MutexGuard<'a, Database>>,
-    activity: Option<(ActivityInbox, ActivityOrigin, Duration)>,
+    activity: Option<activity::Guard>,
 }
 
 impl Deref for DatabaseAccess<'_> {
@@ -68,10 +68,8 @@ impl DerefMut for DatabaseAccess<'_> {
 impl Drop for DatabaseAccess<'_> {
     fn drop(&mut self) {
         drop(self.database.take());
-        if let Some((inbox, origin, elapsed)) = self.activity.take() {
-            if elapsed >= Duration::from_millis(1) {
-                inbox.mutex_wait(origin, elapsed);
-            }
+        if let Some(activity) = self.activity.take() {
+            activity.finish(ActivityState::Complete);
         }
     }
 }
@@ -292,15 +290,146 @@ impl Inventory {
                 })
                 .map_err(|_| ());
         }
-        let started = Instant::now();
-        let database = self.database.lock().map_err(|_| ())?;
-        let activity = self
-            .activity
-            .as_ref()
-            .map(|(inbox, origin)| (inbox.clone(), *origin, started.elapsed()));
+        let mut activity = None;
+        let database = match self.database.try_lock() {
+            Ok(database) => database,
+            Err(TryLockError::Poisoned(_)) => {
+                if let Some((inbox, origin)) = &self.activity {
+                    if let Some(activity) = inbox.waiting_for_mutex(*origin) {
+                        activity.finish(ActivityState::Failed);
+                    }
+                }
+                return Err(());
+            }
+            Err(TryLockError::WouldBlock) => {
+                let Some((inbox, origin)) = &self.activity else {
+                    return self
+                        .database
+                        .lock()
+                        .map(|database| DatabaseAccess {
+                            database: Some(database),
+                            activity: None,
+                        })
+                        .map_err(|_| ());
+                };
+                let mut waiting = inbox.waiting_for_mutex(*origin);
+                let database = match self.database.lock() {
+                    Ok(database) => database,
+                    Err(_) => {
+                        if let Some(waiting) = waiting.take() {
+                            waiting.finish(ActivityState::Failed);
+                        }
+                        return Err(());
+                    }
+                };
+                if let Some(waiting) = waiting.as_mut() {
+                    waiting.phase(ActivityPhase::Access, ActivityState::Running);
+                }
+                activity = waiting;
+                database
+            }
+        };
         Ok(DatabaseAccess {
             database: Some(database),
             activity,
         })
+    }
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+    use crate::models::SyncRootId;
+    use std::sync::Arc;
+
+    fn observed_inventory() -> (Arc<Inventory>, ActivityInbox, PathBuf) {
+        let path = std::env::temp_dir().join(format!(
+            "drivesync-inventory-access-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let account_id = crate::models::AccountId("access-test-account".into());
+        let inbox = ActivityInbox::new(ActivityScope {
+            account: account_id.clone(),
+            root: Some(SyncRootId("access-test-root".into())),
+        });
+        let inventory = Inventory::open_observed(
+            InventoryConfig {
+                directory: path.clone(),
+                account_id,
+            },
+            inbox.clone(),
+            ActivityOrigin::Detectors,
+        )
+        .unwrap();
+        (Arc::new(inventory), inbox, path)
+    }
+
+    #[test]
+    fn mutex_wait_is_published_before_access_and_finished_after_release() {
+        let (inventory, inbox, path) = observed_inventory();
+        let held = inventory.database.lock().unwrap();
+        let worker_inventory = inventory.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            drop(worker_inventory.database().unwrap());
+        });
+        started_rx.recv().unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let waiting = loop {
+            if let Some(activity) = inbox.current().into_iter().find(|activity| {
+                activity.kind == activity::Kind::Access
+                    && activity.state == ActivityState::WaitingForMutex
+            }) {
+                break activity;
+            }
+            assert!(Instant::now() < deadline, "mutex wait was not published");
+            std::thread::yield_now();
+        };
+        assert_eq!(waiting.origin, ActivityOrigin::Detectors);
+
+        drop(held);
+        worker.join().unwrap();
+        assert!(inbox.current().is_empty());
+        assert!(inbox.recent().iter().any(|activity| {
+            activity.id == waiting.id
+                && activity.phase == ActivityPhase::Access
+                && activity.state == ActivityState::Complete
+        }));
+        drop(inventory);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn uncontended_access_does_not_create_an_activity() {
+        let (inventory, inbox, path) = observed_inventory();
+        drop(inventory.database().unwrap());
+        assert!(inbox.current().is_empty());
+        assert!(!inbox
+            .recent()
+            .iter()
+            .any(|activity| activity.kind == activity::Kind::Access));
+        drop(inventory);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn poisoned_mutex_acquisition_is_reported_as_failed() {
+        let (inventory, inbox, path) = observed_inventory();
+        let _ = std::panic::catch_unwind(|| {
+            let _database = inventory.database.lock().unwrap();
+            panic!("poison inventory mutex for the controlled test");
+        });
+        assert!(inventory.database().is_err());
+        assert!(inbox.recent().iter().any(|activity| {
+            activity.kind == activity::Kind::Access && activity.state == ActivityState::Failed
+        }));
+        drop(inventory);
+        std::fs::remove_dir_all(path).unwrap();
     }
 }
