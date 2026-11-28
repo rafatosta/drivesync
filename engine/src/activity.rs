@@ -15,6 +15,48 @@ use crate::models::{AccountId, SyncRootId};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ActivityId(pub(crate) u64);
 
+/// Producer namespace for activity references crossing module inboxes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ActivityModule {
+    Detectors,
+    Operations,
+    Inventory,
+}
+
+/// Unambiguous activity identity; IDs alone are local to their producer inbox.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct ActivityReference {
+    pub(crate) module: ActivityModule,
+    pub(crate) producer: u64,
+    pub(crate) session: u64,
+    pub(crate) account: AccountId,
+    pub(crate) root: Option<SyncRootId>,
+    pub(crate) id: ActivityId,
+}
+
+impl std::fmt::Debug for ActivityReference {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ActivityReference")
+            .field("module", &self.module)
+            .field("producer", &self.producer)
+            .field("session", &self.session)
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Correlation is a related flow reference, not a parent-child relationship.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CorrelationReference(pub(crate) ActivityReference);
+
+/// Optional caller context that Inventory can validate against its fixed scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ActivityContext {
+    pub(crate) parent: Option<ActivityReference>,
+    pub(crate) correlation: Option<CorrelationReference>,
+}
+
 /// Fixed synchronization scope, independent of work generations and capture epochs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Scope {
@@ -198,5 +240,22 @@ mod tests {
         assert_eq!((first.sequence, first.value), (1, 1));
         assert_eq!((second.sequence, second.value), (2, 2));
         assert!(first.at <= second.at);
+    }
+
+    #[test]
+    fn activity_reference_debug_output_does_not_expose_scope_identifiers() {
+        let reference = ActivityReference {
+            module: ActivityModule::Inventory,
+            producer: 3,
+            session: 4,
+            account: AccountId("private-account-value".into()),
+            root: Some(SyncRootId("private-root-value".into())),
+            id: ActivityId(9),
+        };
+        let debug = format!("{reference:?}");
+        assert!(!debug.contains("private-account-value"));
+        assert!(!debug.contains("private-root-value"));
+        assert!(debug.contains("Inventory"));
+        assert!(debug.contains("ActivityId(9)"));
     }
 }

@@ -39,16 +39,20 @@ impl ExecutionJournal for Journal {
             Phase::Checkpoint
         };
         let mut span = Span::start(phase, State::Waiting(Wait::Inventory));
+        let inventory_context = span.activity_context();
         let result = (|| {
             let mut state = self.state.lock().map_err(|_| filesystem::stale())?;
-            let receipt = self.inventory.write(InventoryWrite {
-                operation_id: self.request.execution_id.clone(),
-                item_id: self.request.operation.item_ref.clone(),
-                identity: self.request.identity.clone(),
-                expected_revision: Some(state.0),
-                effect: PersistedEffect::RecoveryCheckpoint(checkpoint.clone()),
-                recorded_at: now(),
-            });
+            let receipt = self.inventory.write_with_context(
+                InventoryWrite {
+                    operation_id: self.request.execution_id.clone(),
+                    item_id: self.request.operation.item_ref.clone(),
+                    identity: self.request.identity.clone(),
+                    expected_revision: Some(state.0),
+                    effect: PersistedEffect::RecoveryCheckpoint(checkpoint.clone()),
+                    recorded_at: now(),
+                },
+                inventory_context.as_ref(),
+            );
             span.receipt(receipt.status);
             if receipt.status != WriteStatus::Written {
                 return Err(filesystem::stale().uncertain());

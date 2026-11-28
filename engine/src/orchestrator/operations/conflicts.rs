@@ -31,11 +31,15 @@ impl PersistingOperator {
                 Err(filesystem::stale())
             };
         }
-        let _lease = activity::measured(Phase::Acquire, State::Waiting(Wait::Inventory), || {
-            self.inventory
-                .execution_lease()
-                .map_err(|_| filesystem::stale())
-        })?;
+        let _lease = activity::measured_context(
+            Phase::Acquire,
+            State::Waiting(Wait::Inventory),
+            |context| {
+                self.inventory
+                    .execution_lease_with_context(context)
+                    .map_err(|_| filesystem::stale())
+            },
+        )?;
         let mut identity = file.identity.clone();
         let mut local = file.local.clone();
         let mut remote = file.remote.clone();
@@ -68,25 +72,28 @@ impl PersistingOperator {
             return Err(filesystem::stale());
         }
         let id = crate::orchestrator::execution_id().map_err(|_| filesystem::stale())?;
-        let result = activity::persist(Phase::RecordConflict, || {
-            self.inventory.write(InventoryWrite {
-                operation_id: id.clone(),
-                item_id: item.clone(),
-                identity,
-                expected_revision: Some(file.inventory_revision.unwrap_or(0)),
-                recorded_at: now(),
-                effect: PersistedEffect::ConflictUpdated(Some(ConflictState {
-                    id,
-                    item_id: item,
-                    reason,
-                    resolved: false,
-                    resolution: None,
-                    local,
-                    remote,
-                    observed_revision: file.inventory_revision.unwrap_or(0),
-                    updated_at: now(),
-                })),
-            })
+        let result = activity::persist(Phase::RecordConflict, |context| {
+            self.inventory.write_with_context(
+                InventoryWrite {
+                    operation_id: id.clone(),
+                    item_id: item.clone(),
+                    identity,
+                    expected_revision: Some(file.inventory_revision.unwrap_or(0)),
+                    recorded_at: now(),
+                    effect: PersistedEffect::ConflictUpdated(Some(ConflictState {
+                        id,
+                        item_id: item,
+                        reason,
+                        resolved: false,
+                        resolution: None,
+                        local,
+                        remote,
+                        observed_revision: file.inventory_revision.unwrap_or(0),
+                        updated_at: now(),
+                    })),
+                },
+                context,
+            )
         });
         if result.status != WriteStatus::Written {
             return Err(filesystem::stale());

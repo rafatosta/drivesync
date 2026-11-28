@@ -5,7 +5,10 @@ mod models;
 mod tests;
 
 use crate::{
-    activity::{ActivityReporter, DiagnosticWriter, Recent, Sample, HASH_PROGRESS_MIN},
+    activity::{
+        ActivityContext, ActivityModule, ActivityReference, ActivityReporter, DiagnosticWriter,
+        Recent, Sample, HASH_PROGRESS_MIN,
+    },
     inventory::models::{InventoryWriteResult, WriteStatus},
     models::{Id, ItemId},
 };
@@ -386,6 +389,22 @@ pub(super) struct Span {
 }
 
 impl Span {
+    pub(super) fn activity_context(&self) -> Option<ActivityContext> {
+        let context = self.context.as_ref()?;
+        let id = context.parent?;
+        Some(ActivityContext {
+            parent: Some(ActivityReference {
+                module: ActivityModule::Operations,
+                producer: context.channel.label,
+                session: context.channel.label,
+                account: context.channel.scope.account.clone(),
+                root: Some(context.channel.scope.root.clone()),
+                id,
+            }),
+            correlation: None,
+        })
+    }
+
     pub(super) fn execution(
         scope: &super::models::OperatorConfig,
         kind: Kind,
@@ -602,10 +621,11 @@ pub(super) async fn waiting<T, E>(
 
 pub(super) fn persist(
     phase: Phase,
-    write: impl FnOnce() -> InventoryWriteResult,
+    write: impl FnOnce(Option<&ActivityContext>) -> InventoryWriteResult,
 ) -> InventoryWriteResult {
     let mut span = Span::start(phase, State::Waiting(Wait::Inventory));
-    let receipt = write();
+    let context = span.activity_context();
+    let receipt = write(context.as_ref());
     span.receipt(receipt.status);
     span.finish(if receipt.status == WriteStatus::Written {
         Outcome::Complete
@@ -622,6 +642,18 @@ pub(super) fn measured<T, E>(
 ) -> Result<T, E> {
     let mut span = Span::start(phase, state);
     let result = span.within_sync(work);
+    span.result(&result);
+    result
+}
+
+pub(super) fn measured_context<T, E>(
+    phase: Phase,
+    state: State,
+    work: impl FnOnce(Option<&ActivityContext>) -> Result<T, E>,
+) -> Result<T, E> {
+    let mut span = Span::start(phase, state);
+    let context = span.activity_context();
+    let result = span.within_sync(|| work(context.as_ref()));
     span.result(&result);
     result
 }

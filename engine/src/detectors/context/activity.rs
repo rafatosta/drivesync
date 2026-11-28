@@ -1,6 +1,9 @@
 //! Context phases and units for work on observations and persisted evidence.
 
-use crate::detectors::activity::{ActivityGuard, Details, Phase, Progress, State, Unit, Wait};
+use crate::{
+    activity::ActivityContext,
+    detectors::activity::{ActivityGuard, Details, Phase, Progress, State, Unit, Wait},
+};
 use std::cell::Cell;
 
 #[derive(Clone, Copy, Default)]
@@ -39,6 +42,14 @@ impl<'a> Trace<'a> {
             lookups: Some(lookups),
             ..self
         }
+    }
+
+    pub(super) fn inventory_context(&self) -> Option<ActivityContext> {
+        let parent = self.parent?.reference()?;
+        Some(ActivityContext {
+            parent: Some(parent),
+            correlation: None,
+        })
     }
 
     pub(super) fn lookup<T>(&self, query: impl FnOnce() -> T) -> T {

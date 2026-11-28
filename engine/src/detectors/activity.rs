@@ -10,11 +10,16 @@ use diagnostics::{Diagnostics, Event};
 pub(crate) use models::*;
 use std::time::Instant;
 
-use crate::activity::{ActivityReporter, DiagnosticWriter, Sample};
+use crate::activity::{
+    ActivityModule, ActivityReference, ActivityReporter, DiagnosticWriter, Sample,
+};
 use crate::synchronization::{SynchronizationScan, SynchronizationScanState, SynchronizationWork};
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
 };
 use tokio::sync::Notify;
 
@@ -124,6 +129,7 @@ fn finish_record(
 /// The supervisor only holds this lock while taking changed slots; no callbacks run under it.
 pub(super) struct ActivityChannel {
     scope: Scope,
+    session: u64,
     latest: Mutex<Latest>,
     changed: Notify,
 }
@@ -137,9 +143,11 @@ impl ActivityChannel {
     }
 
     pub(super) fn with_diagnostics(scope: Scope, enabled: bool) -> Arc<Self> {
+        static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
         let diagnostics = enabled.then(|| Box::new(Diagnostics::new(&scope)));
         Arc::new(Self {
             scope,
+            session: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
             latest: Mutex::new(Latest {
                 diagnostics,
                 ..Latest::default()
@@ -646,6 +654,18 @@ pub(crate) struct ActivityGuard {
 }
 
 impl ActivityGuard {
+    pub(crate) fn reference(&self) -> Option<ActivityReference> {
+        let id = self.id?;
+        Some(ActivityReference {
+            module: ActivityModule::Detectors,
+            producer: self.publisher.channel.session,
+            session: self.publisher.generation.0,
+            account: self.publisher.channel.scope.account.clone(),
+            root: Some(self.publisher.channel.scope.root.clone()),
+            id,
+        })
+    }
+
     pub(crate) fn child(&self, phase: Phase, state: State, details: Details) -> Self {
         self.child_from(self.origin, phase, state, details)
     }

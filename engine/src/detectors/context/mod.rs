@@ -196,8 +196,14 @@ impl Context {
             }),
             (None, _, None) => None,
         };
+        let inventory_context = trace.inventory_context();
         let lookup_result = lookup
-            .map(|request| trace.lookup(|| self.inventory.lookup(request)))
+            .map(|request| {
+                trace.lookup(|| {
+                    self.inventory
+                        .lookup_with_context(request, inventory_context.as_ref())
+                })
+            })
             .map(|result| (result.status, result.snapshot));
         let (lookup_status, snapshot) =
             match lookup_result.unwrap_or((InventoryLookupStatus::Error, None)) {

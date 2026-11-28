@@ -29,6 +29,28 @@ fn execute(config: &OperatorConfig, execution: &str) -> Span {
 }
 
 #[tokio::test]
+async fn activity_context_uses_a_scoped_operations_identity() {
+    let config = config("account", "root");
+    let inbox = ActivityInbox::for_config(&config);
+    inbox
+        .observe(async {
+            let root = execute(&config, "execution");
+            root.within(async {
+                let mut child = Span::start(Phase::PersistEffect, State::Running);
+                let context = child.activity_context().unwrap();
+                let parent = context.parent.unwrap();
+                assert_eq!(parent.module, crate::activity::ActivityModule::Operations);
+                assert_eq!(parent.account, config.account_id);
+                assert_eq!(parent.root, Some(config.sync_root_id.clone()));
+                assert_eq!(parent.producer, parent.session);
+                child.finish(Outcome::Complete);
+            })
+            .await;
+        })
+        .await;
+}
+
+#[tokio::test]
 async fn isolates_concurrent_executions_and_mismatched_account_or_root() {
     let a = config("account-one", "root-one");
     let other_root = config("account-one", "root-two");

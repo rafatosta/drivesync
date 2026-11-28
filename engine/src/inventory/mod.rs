@@ -111,6 +111,13 @@ impl Inventory {
     /// Holds an OS lease on this account database while Operations dispatches or recovers effects.
     /// Closing the descriptor releases ownership after cancellation or process exit.
     pub(crate) fn execution_lease(&self) -> Result<std::fs::File, InventoryError> {
+        self.execution_lease_with_context(None)
+    }
+
+    pub(crate) fn execution_lease_with_context(
+        &self,
+        context: Option<&crate::activity::ActivityContext>,
+    ) -> Result<std::fs::File, InventoryError> {
         use std::os::{
             fd::AsRawFd,
             unix::fs::{MetadataExt, OpenOptionsExt},
@@ -118,7 +125,7 @@ impl Inventory {
         let activity = self
             .activity
             .as_ref()
-            .and_then(|(inbox, origin)| inbox.lease(*origin));
+            .and_then(|(inbox, origin)| inbox.lease(*origin, context));
         let result = (|| {
             let database = self.database().map_err(|_| InventoryError::Unavailable)?;
             let path = database
@@ -153,10 +160,18 @@ impl Inventory {
 
     /// Returns a conclusive result only when the database and scope were readable.
     pub(crate) fn lookup(&self, request: InventoryLookup) -> InventoryLookupResult {
+        self.lookup_with_context(request, None)
+    }
+
+    pub(crate) fn lookup_with_context(
+        &self,
+        request: InventoryLookup,
+        context: Option<&crate::activity::ActivityContext>,
+    ) -> InventoryLookupResult {
         let mut lookup = self
             .activity
             .as_ref()
-            .and_then(|(inbox, origin)| inbox.begin_lookup(*origin));
+            .and_then(|(inbox, origin)| inbox.begin_lookup_with_context(*origin, context));
         let result = if request.account_id != self.account_id {
             InventoryLookupResult::unavailable("Requested account is outside this Inventory scope.")
         } else {
@@ -188,13 +203,21 @@ impl Inventory {
         &self,
         query: models::InventoryScopeQuery,
     ) -> Result<Vec<models::InventorySnapshot>, InventoryError> {
+        self.enumerate_with_context(query, None)
+    }
+
+    pub(crate) fn enumerate_with_context(
+        &self,
+        query: models::InventoryScopeQuery,
+        context: Option<&crate::activity::ActivityContext>,
+    ) -> Result<Vec<models::InventorySnapshot>, InventoryError> {
         if query.account_id != self.account_id {
             return Err(InventoryError::InvalidConfiguration);
         }
         let mut activity = self
             .activity
             .as_ref()
-            .and_then(|(inbox, origin)| inbox.enumerate(*origin));
+            .and_then(|(inbox, origin)| inbox.enumerate(*origin, context));
         let result = match self.database() {
             Ok(database) => database.enumerate_observed(query, activity.as_mut()),
             Err(()) => Err(InventoryError::Unavailable),
@@ -211,6 +234,14 @@ impl Inventory {
 
     /// Atomically records a typed operation effect with optional optimistic revision checking.
     pub(crate) fn write(&self, request: InventoryWrite) -> InventoryWriteResult {
+        self.write_with_context(request, None)
+    }
+
+    pub(crate) fn write_with_context(
+        &self,
+        request: InventoryWrite,
+        context: Option<&crate::activity::ActivityContext>,
+    ) -> InventoryWriteResult {
         let _sample = crate::performance::Sample::begin("inventory_write");
         let mut activity = self.activity.as_ref().and_then(|(inbox, origin)| {
             let persistence = match &request.effect {
@@ -235,7 +266,7 @@ impl Inventory {
                 models::PersistedEffect::OperationFailed => ActivityPersistence::OperationFailure,
                 models::PersistedEffect::ConflictUpdated(_) => ActivityPersistence::Conflict,
             };
-            inbox.write(*origin, persistence)
+            inbox.write(*origin, persistence, context)
         });
         if request.identity.account_id != self.account_id {
             let result =

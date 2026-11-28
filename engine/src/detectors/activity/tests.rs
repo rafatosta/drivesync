@@ -29,6 +29,15 @@ fn simultaneous_activity_is_scoped_by_account_root_and_source_session() {
     let other_local = other_account.open(Source::Local);
     let local_guard = begin(&local.publisher(), Origin::Local);
     let remote_guard = begin(&remote.publisher(), Origin::Remote);
+    let local_reference = local_guard.reference().unwrap();
+    let remote_reference = remote_guard.reference().unwrap();
+    assert_eq!(
+        local_reference.module,
+        crate::activity::ActivityModule::Detectors
+    );
+    assert_eq!(local_reference.account, AccountId("a".into()));
+    assert_eq!(local_reference.root, Some(SyncRootId("r".into())));
+    assert_ne!(local_reference.session, remote_reference.session);
     let first = local_guard.child(
         Phase::Checksum,
         State::Running,

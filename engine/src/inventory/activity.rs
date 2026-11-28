@@ -1,7 +1,10 @@
 //! Account and root scoped reporting for Inventory work.
 
 use crate::{
-    activity::{ActivityId, DiagnosticWriter, Recent},
+    activity::{
+        ActivityContext, ActivityId, ActivityModule, ActivityReference, CorrelationReference,
+        DiagnosticWriter, Recent,
+    },
     models::{AccountId, SyncRootId},
 };
 use std::{
@@ -98,8 +101,9 @@ pub(crate) struct Progress {
 #[derive(Debug, Clone)]
 pub(crate) struct Activity {
     pub id: ActivityId,
-    pub parent: Option<ActivityId>,
-    pub correlation: Option<ActivityId>,
+    pub identity: ActivityReference,
+    pub parent: Option<ActivityReference>,
+    pub correlation: Option<CorrelationReference>,
     pub origin: Origin,
     pub kind: Kind,
     pub phase: Phase,
@@ -138,6 +142,7 @@ struct LookupFlight {
     origin: Origin,
     started: Instant,
     activity: Option<ActivityId>,
+    context: Option<ActivityContext>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -271,7 +276,17 @@ impl ActivityInbox {
     }
 
     fn begin(&self, origin: Origin, kind: Kind, phase: Phase) -> Option<Guard> {
-        self.begin_at(origin, kind, phase, State::Running, Instant::now())
+        self.begin_at(origin, kind, phase, State::Running, Instant::now(), None)
+    }
+
+    fn begin_with_context(
+        &self,
+        origin: Origin,
+        kind: Kind,
+        phase: Phase,
+        context: Option<&ActivityContext>,
+    ) -> Option<Guard> {
+        self.begin_at(origin, kind, phase, State::Running, Instant::now(), context)
     }
 
     fn begin_at(
@@ -281,6 +296,7 @@ impl ActivityInbox {
         phase: Phase,
         state: State,
         started: Instant,
+        context: Option<&ActivityContext>,
     ) -> Option<Guard> {
         let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
         if latest.closed || latest.active.len() >= ACTIVE_LIMIT {
@@ -294,10 +310,17 @@ impl ActivityInbox {
         };
         let id = ActivityId(next);
         latest.next = next;
+        let parent = context
+            .and_then(|context| context.parent.as_ref())
+            .filter(|reference| self.compatible(reference));
+        let correlation = context
+            .and_then(|context| context.correlation.as_ref())
+            .filter(|reference| self.compatible(&reference.0));
         let activity = Activity {
             id,
-            parent: None,
-            correlation: None,
+            identity: self.identity(id),
+            parent: parent.cloned(),
+            correlation: correlation.cloned(),
             origin,
             kind,
             phase,
@@ -321,24 +344,61 @@ impl ActivityInbox {
         })
     }
 
+    fn compatible(&self, reference: &ActivityReference) -> bool {
+        reference.account == self.0.scope.account && reference.root == self.0.scope.root
+    }
+
+    fn identity(&self, id: ActivityId) -> ActivityReference {
+        ActivityReference {
+            module: ActivityModule::Inventory,
+            producer: self.0.label,
+            session: self.0.label,
+            account: self.0.scope.account.clone(),
+            root: self.0.scope.root.clone(),
+            id,
+        }
+    }
+
     pub(crate) fn open(&self, origin: Origin) -> Option<Guard> {
         self.begin(origin, Kind::Open, Phase::OpenStorage)
     }
-    pub(crate) fn enumerate(&self, origin: Origin) -> Option<Guard> {
-        self.begin(origin, Kind::Enumerate, Phase::ReadRecords)
+    pub(crate) fn enumerate(
+        &self,
+        origin: Origin,
+        context: Option<&ActivityContext>,
+    ) -> Option<Guard> {
+        self.begin_with_context(origin, Kind::Enumerate, Phase::ReadRecords, context)
     }
-    pub(crate) fn write(&self, origin: Origin, persistence: Persistence) -> Option<Guard> {
-        self.begin(origin, Kind::Write(persistence), Phase::Validate)
+    pub(crate) fn write(
+        &self,
+        origin: Origin,
+        persistence: Persistence,
+        context: Option<&ActivityContext>,
+    ) -> Option<Guard> {
+        self.begin_with_context(origin, Kind::Write(persistence), Phase::Validate, context)
     }
-    pub(crate) fn lease(&self, origin: Origin) -> Option<Guard> {
-        self.begin(origin, Kind::Lease, Phase::Acquire)
+    pub(crate) fn lease(&self, origin: Origin, context: Option<&ActivityContext>) -> Option<Guard> {
+        self.begin_with_context(origin, Kind::Lease, Phase::Acquire, context)
     }
 
     pub(crate) fn begin_lookup(&self, origin: Origin) -> Option<LookupGuard> {
-        self.begin_lookup_at(origin, Instant::now())
+        self.begin_lookup_at(origin, Instant::now(), None)
     }
 
-    fn begin_lookup_at(&self, origin: Origin, started: Instant) -> Option<LookupGuard> {
+    pub(crate) fn begin_lookup_with_context(
+        &self,
+        origin: Origin,
+        context: Option<&ActivityContext>,
+    ) -> Option<LookupGuard> {
+        self.begin_lookup_at(origin, Instant::now(), context)
+    }
+
+    fn begin_lookup_at(
+        &self,
+        origin: Origin,
+        started: Instant,
+        context: Option<&ActivityContext>,
+    ) -> Option<LookupGuard> {
         let mut latest = self.0.latest.lock().unwrap_or_else(|e| e.into_inner());
         if latest.closed || latest.lookups_in_flight.len() >= LOOKUP_LIMIT {
             latest.omitted = latest.omitted.saturating_add(1);
@@ -354,6 +414,7 @@ impl ActivityInbox {
             origin,
             started,
             activity: None,
+            context: context.cloned(),
         });
         Some(LookupGuard {
             inbox: self.clone(),
@@ -377,9 +438,14 @@ impl ActivityInbox {
             if latest.active.len() >= ACTIVE_LIMIT {
                 break;
             }
-            let (origin, started, activity_id) = {
+            let (origin, started, activity_id, context) = {
                 let flight = &latest.lookups_in_flight[index];
-                (flight.origin, flight.started, flight.activity)
+                (
+                    flight.origin,
+                    flight.started,
+                    flight.activity,
+                    flight.context.clone(),
+                )
             };
             if activity_id.is_some()
                 || now.saturating_duration_since(started) < SLOW_LOOKUP_THRESHOLD
@@ -393,8 +459,17 @@ impl ActivityInbox {
             latest.next = next;
             let activity = Activity {
                 id: ActivityId(next),
-                parent: None,
-                correlation: None,
+                identity: self.identity(ActivityId(next)),
+                parent: context
+                    .as_ref()
+                    .and_then(|context| context.parent.as_ref())
+                    .filter(|reference| self.compatible(reference))
+                    .cloned(),
+                correlation: context
+                    .as_ref()
+                    .and_then(|context| context.correlation.as_ref())
+                    .filter(|reference| self.compatible(&reference.0))
+                    .cloned(),
                 origin,
                 kind: Kind::Lookup,
                 phase: Phase::Query,
@@ -486,6 +561,7 @@ impl ActivityInbox {
             Phase::Acquire,
             State::WaitingForMutex,
             Instant::now(),
+            None,
         )
     }
 }
@@ -672,7 +748,7 @@ mod tests {
     #[test]
     fn lifecycle_is_ordered_and_terminal_activity_is_removed() {
         let inbox = inbox();
-        let mut activity = inbox.enumerate(Origin::Detectors).unwrap();
+        let mut activity = inbox.enumerate(Origin::Detectors, None).unwrap();
         activity.phase(Phase::ReadRecords, State::Running);
         activity.progress(3, Some(8));
         activity.finish(State::Complete);
@@ -687,7 +763,7 @@ mod tests {
     fn closing_retires_active_work_and_rejects_late_publications() {
         let inbox = inbox();
         let activity = inbox
-            .write(Origin::Operations, Persistence::PendingOperation)
+            .write(Origin::Operations, Persistence::PendingOperation, None)
             .unwrap();
         inbox.close();
         assert!(inbox.current().is_empty());
@@ -695,7 +771,7 @@ mod tests {
         let updates = inbox.0.latest.lock().unwrap().updates.take();
         assert_eq!(updates.last().unwrap().state, State::Cancelled);
         assert!(inbox
-            .write(Origin::Operations, Persistence::PendingOperation)
+            .write(Origin::Operations, Persistence::PendingOperation, None)
             .is_none());
     }
 
@@ -703,9 +779,9 @@ mod tests {
     fn active_and_recent_storage_are_bounded() {
         let inbox = inbox();
         let active = (0..ACTIVE_LIMIT)
-            .map(|_| inbox.lease(Origin::Operations).unwrap())
+            .map(|_| inbox.lease(Origin::Operations, None).unwrap())
             .collect::<Vec<_>>();
-        assert!(inbox.lease(Origin::Operations).is_none());
+        assert!(inbox.lease(Origin::Operations, None).is_none());
         assert_eq!(inbox.current().len(), ACTIVE_LIMIT);
         drop(active);
         let mut recent = inbox.0.latest.lock().unwrap();
@@ -734,7 +810,7 @@ mod tests {
             let inbox = inbox.clone();
             workers.push(std::thread::spawn(move || {
                 for _ in 0..40 {
-                    let activity = inbox.lease(Origin::Operations).unwrap();
+                    let activity = inbox.lease(Origin::Operations, None).unwrap();
                     activity.finish(State::Complete);
                 }
             }));
@@ -786,6 +862,56 @@ mod tests {
     }
 
     #[test]
+    fn references_are_scoped_and_distinguish_identity_parent_and_correlation() {
+        use crate::activity::{ActivityModule, ActivityReference, CorrelationReference};
+
+        let inbox = inbox();
+        let parent = ActivityReference {
+            module: ActivityModule::Detectors,
+            producer: 10,
+            session: 4,
+            account: inbox.scope().account.clone(),
+            root: inbox.scope().root.clone(),
+            id: ActivityId(1),
+        };
+        let related = ActivityReference {
+            module: ActivityModule::Operations,
+            producer: 20,
+            session: 7,
+            account: inbox.scope().account.clone(),
+            root: inbox.scope().root.clone(),
+            id: ActivityId(1),
+        };
+        assert_ne!(parent, related);
+
+        let context = ActivityContext {
+            parent: Some(parent.clone()),
+            correlation: Some(CorrelationReference(related.clone())),
+        };
+        let context = std::thread::spawn(move || context).join().unwrap();
+        let activity = inbox.enumerate(Origin::Detectors, Some(&context)).unwrap();
+        let current = inbox.current().pop().unwrap();
+        assert_eq!(current.identity.module, ActivityModule::Inventory);
+        assert_ne!(current.identity, parent);
+        assert_eq!(current.parent, Some(parent.clone()));
+        assert_eq!(current.correlation, Some(CorrelationReference(related)));
+        activity.finish(State::Complete);
+
+        let incompatible = ActivityContext {
+            parent: Some(ActivityReference {
+                account: AccountId("another-account".into()),
+                ..parent
+            }),
+            correlation: None,
+        };
+        let activity = inbox
+            .enumerate(Origin::Detectors, Some(&incompatible))
+            .unwrap();
+        assert_eq!(inbox.current().last().unwrap().parent, None);
+        activity.finish(State::Complete);
+    }
+
+    #[test]
     fn short_lookup_completes_without_promoting_an_activity() {
         let inbox = inbox();
         let lookup = inbox.begin_lookup(Origin::Detectors).unwrap();
@@ -804,7 +930,9 @@ mod tests {
     fn slow_lookup_is_promoted_while_running_then_removed_on_completion() {
         let inbox = inbox();
         let started = Instant::now() - SLOW_LOOKUP_THRESHOLD - Duration::from_millis(1);
-        let lookup = inbox.begin_lookup_at(Origin::Operations, started).unwrap();
+        let lookup = inbox
+            .begin_lookup_at(Origin::Operations, started, None)
+            .unwrap();
         inbox.promote_slow_lookups();
         let active = inbox.current();
         assert_eq!(active.len(), 1);
@@ -825,7 +953,9 @@ mod tests {
     fn completion_racing_promotion_cannot_leave_a_stale_activity() {
         let inbox = inbox();
         let started = Instant::now() - SLOW_LOOKUP_THRESHOLD - Duration::from_millis(1);
-        let lookup = inbox.begin_lookup_at(Origin::Detectors, started).unwrap();
+        let lookup = inbox
+            .begin_lookup_at(Origin::Detectors, started, None)
+            .unwrap();
         let barrier = Arc::new(std::sync::Barrier::new(3));
         let promote_inbox = inbox.clone();
         let promote_barrier = barrier.clone();
@@ -858,9 +988,15 @@ mod tests {
         let inbox = inbox();
         let started = Instant::now() - SLOW_LOOKUP_THRESHOLD - Duration::from_millis(1);
         let lookups = (0..LOOKUP_LIMIT)
-            .map(|_| inbox.begin_lookup_at(Origin::Detectors, started).unwrap())
+            .map(|_| {
+                inbox
+                    .begin_lookup_at(Origin::Detectors, started, None)
+                    .unwrap()
+            })
             .collect::<Vec<_>>();
-        assert!(inbox.begin_lookup_at(Origin::Operations, started).is_none());
+        assert!(inbox
+            .begin_lookup_at(Origin::Operations, started, None)
+            .is_none());
         inbox.promote_slow_lookups();
         let promoted = inbox.current();
         assert_eq!(promoted.len(), ACTIVE_LIMIT);

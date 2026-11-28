@@ -5,6 +5,7 @@ impl PersistingOperator {
         &self,
         r: &ExecuteOperationRequest,
         stored: &InventorySnapshot,
+        context: Option<&crate::activity::ActivityContext>,
     ) -> Result<(), OperatorError> {
         if !self.config.trash_propagation_authorized
             || stored.baseline.state != BaselineState::Synced
@@ -24,7 +25,7 @@ impl PersistingOperator {
         {
             return Err(filesystem::stale());
         }
-        self.confirmed_parent(
+        self.confirmed_parent_with_context(
             &match &local.parent {
                 Evidence::Known(p) => p.clone(),
                 _ => return Err(filesystem::stale()),
@@ -33,6 +34,7 @@ impl PersistingOperator {
                 Evidence::Known(p) => p.clone(),
                 _ => return Err(filesystem::stale()),
             },
+            context,
         )
         .ok_or_else(filesystem::stale)?;
         if r.operation
@@ -70,7 +72,7 @@ impl PersistingOperator {
         }
         if local.kind == Evidence::Known(FileKind::Directory) {
             let path = local.path.as_ref().ok_or_else(filesystem::stale)?;
-            if self.inventory.enumerate(InventoryScopeQuery { account_id:self.config.account_id.clone(),sync_root_id:self.config.sync_root_id.clone() }).map_err(|_|filesystem::stale())?.iter().any(|s|s.identity.item_id != stored.identity.item_id && (s.local_path.as_ref().is_some_and(|p| p!=path && p.starts_with(path)) || s.baseline.remote.as_ref().is_some_and(|v| matches!(&v.parents,Evidence::Known(ids) if stored.identity.remote_id.as_ref().is_some_and(|id|ids.contains(id)))))) { return Err(filesystem::stale()); }
+            if self.inventory.enumerate_with_context(InventoryScopeQuery { account_id:self.config.account_id.clone(),sync_root_id:self.config.sync_root_id.clone() }, context).map_err(|_|filesystem::stale())?.iter().any(|s|s.identity.item_id != stored.identity.item_id && (s.local_path.as_ref().is_some_and(|p| p!=path && p.starts_with(path)) || s.baseline.remote.as_ref().is_some_and(|v| matches!(&v.parents,Evidence::Known(ids) if stored.identity.remote_id.as_ref().is_some_and(|id|ids.contains(id)))))) { return Err(filesystem::stale()); }
         }
         Ok(())
     }

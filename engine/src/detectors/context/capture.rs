@@ -24,12 +24,16 @@ impl Context {
         &self,
         trace: Trace<'_>,
     ) -> Result<Vec<InventorySnapshot>, ContextError> {
+        let inventory_context = trace.inventory_context();
         let mut snapshots = trace
             .wait(Resource::Inventory, || {
-                self.inventory.enumerate(InventoryScopeQuery {
-                    account_id: self.config.account_id.clone(),
-                    sync_root_id: self.config.sync_root_id.clone(),
-                })
+                self.inventory.enumerate_with_context(
+                    InventoryScopeQuery {
+                        account_id: self.config.account_id.clone(),
+                        sync_root_id: self.config.sync_root_id.clone(),
+                    },
+                    inventory_context.as_ref(),
+                )
             })
             .map_err(|_| ContextError::InventoryUnavailable)?;
         let mut filtering = trace.batch(Work::InventoryRecords, snapshots.len());

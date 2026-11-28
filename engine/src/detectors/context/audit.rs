@@ -34,8 +34,12 @@ impl Context {
         let _round = trace
             .wait(Resource::Context, || self.rounds.lock())
             .map_err(|_| ContextError::InvalidCapture)?;
+        let inventory_context = trace.inventory_context();
         let _execution = trace
-            .wait(Resource::Inventory, || self.inventory.execution_lease())
+            .wait(Resource::Inventory, || {
+                self.inventory
+                    .execution_lease_with_context(inventory_context.as_ref())
+            })
             .map_err(|_| ContextError::InventoryUnavailable)?;
         let captures = trace
             .wait(Resource::Context, || self.captures.lock())

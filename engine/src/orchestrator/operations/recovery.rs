@@ -56,9 +56,18 @@ pub(super) fn record(
     })
 }
 impl PersistingOperator {
+    #[cfg(test)]
     pub(super) async fn prepare(
         &self,
         r: &ExecuteOperationRequest,
+    ) -> Result<RecoveryRecord, OperatorError> {
+        self.prepare_with_context(r, None).await
+    }
+
+    pub(super) async fn prepare_with_context(
+        &self,
+        r: &ExecuteOperationRequest,
+        context: Option<&crate::activity::ActivityContext>,
     ) -> Result<RecoveryRecord, OperatorError> {
         if matches!(
             r.operation.action,
@@ -82,7 +91,7 @@ impl PersistingOperator {
             let Evidence::Known(local_parent) = &r.local.parent else {
                 return Err(filesystem::stale());
             };
-            self.confirmed_parent(local_parent, &remote_parents)
+            self.confirmed_parent_with_context(local_parent, &remote_parents, context)
                 .ok_or_else(filesystem::stale)?;
         }
         if matches!(
@@ -106,7 +115,7 @@ impl PersistingOperator {
                     r.operation.parent_id.iter().cloned().collect(),
                 )
             };
-            self.confirmed_parent(&local, &remote)
+            self.confirmed_parent_with_context(&local, &remote, context)
                 .ok_or_else(filesystem::stale)?;
         }
         let reserved = self.remote.reserve(&self.config, r).await?;
@@ -174,17 +183,21 @@ impl PersistingOperator {
         span.phase(Phase::Acquire, State::Waiting(Wait::OperatorGate));
         let _guard = self.gate.lock().await;
         span.phase(Phase::Acquire, State::Waiting(Wait::Inventory));
+        let inventory_context = span.activity_context();
         let _lease = self
             .inventory
-            .execution_lease()
+            .execution_lease_with_context(inventory_context.as_ref())
             .map_err(|_| OperatorError::new(OperatorErrorKind::Unavailable))?;
         span.phase(Phase::ReadRecovery, State::Waiting(Wait::Inventory));
         let snapshots = self
             .inventory
-            .enumerate(InventoryScopeQuery {
-                account_id: self.config.account_id.clone(),
-                sync_root_id: self.config.sync_root_id.clone(),
-            })
+            .enumerate_with_context(
+                InventoryScopeQuery {
+                    account_id: self.config.account_id.clone(),
+                    sync_root_id: self.config.sync_root_id.clone(),
+                },
+                inventory_context.as_ref(),
+            )
             .map_err(|_| OperatorError::new(OperatorErrorKind::Unavailable))?;
         span.progress(
             Progress::Count {
@@ -354,9 +367,10 @@ impl PersistingOperator {
                 .filter(|r| r.command.action == OperationAction::Upload)
             {
                 let parent = match &record.local.parent {
-                    Evidence::Known(parent) => self.confirmed_parent(
+                    Evidence::Known(parent) => self.confirmed_parent_with_context(
                         parent,
                         &record.command.parent_id.iter().cloned().collect::<Vec<_>>(),
+                        attempt.activity_context().as_ref(),
                     ),
                     _ => None,
                 };
@@ -418,19 +432,22 @@ impl PersistingOperator {
         };
         attempt.effect(observed, false);
         attempt.phase(Phase::PersistEffect, State::Running);
-        let mut receipt = activity::persist(Phase::PersistEffect, || {
-            self.inventory.write(InventoryWrite {
-                operation_id: pending.id.clone(),
-                item_id: pending.item_id.clone(),
-                identity: identity.clone(),
-                expected_revision: revision,
-                effect: PersistedEffect::RecoveryObserved {
-                    outcome: assessment.outcome,
-                    issue: assessment.issue,
-                    effect: assessment.effect.clone().map(Box::new),
+        let mut receipt = activity::persist(Phase::PersistEffect, |context| {
+            self.inventory.write_with_context(
+                InventoryWrite {
+                    operation_id: pending.id.clone(),
+                    item_id: pending.item_id.clone(),
+                    identity: identity.clone(),
+                    expected_revision: revision,
+                    effect: PersistedEffect::RecoveryObserved {
+                        outcome: assessment.outcome,
+                        issue: assessment.issue,
+                        effect: assessment.effect.clone().map(Box::new),
+                    },
+                    recorded_at: now(),
                 },
-                recorded_at: now(),
-            })
+                context,
+            )
         });
         attempt.effect(
             observed,
@@ -440,19 +457,24 @@ impl PersistingOperator {
         {
             attempt.phase(Phase::Confirm, State::Running);
             let effect = assessment.effect.as_ref().ok_or_else(filesystem::stale)?;
-            let confirmed = match self.convergence(effect) {
+            let inventory_context = attempt.activity_context();
+            let confirmed = match self.convergence_with_context(effect, inventory_context.as_ref())
+            {
                 Some((baseline, parent)) => PersistedEffect::BaselineConfirmed { baseline, parent },
                 None => PersistedEffect::OperationConfirmed,
             };
-            receipt = activity::persist(Phase::Confirm, || {
-                self.inventory.write(InventoryWrite {
-                    operation_id: pending.id.clone(),
-                    item_id: pending.item_id.clone(),
-                    identity,
-                    expected_revision: receipt.revision,
-                    effect: confirmed,
-                    recorded_at: now(),
-                })
+            receipt = activity::persist(Phase::Confirm, |context| {
+                self.inventory.write_with_context(
+                    InventoryWrite {
+                        operation_id: pending.id.clone(),
+                        item_id: pending.item_id.clone(),
+                        identity,
+                        expected_revision: receipt.revision,
+                        effect: confirmed,
+                        recorded_at: now(),
+                    },
+                    context,
+                )
             });
         }
         attempt.receipt(receipt.status);

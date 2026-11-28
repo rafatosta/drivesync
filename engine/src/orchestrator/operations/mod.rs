@@ -12,6 +12,7 @@ mod recovery;
 mod trash;
 use crate::{
     accounts::{Accounts, GetAccountRequest},
+    activity::ActivityContext,
     inventory::{models::*, Inventory},
     models::*,
 };
@@ -123,19 +124,31 @@ impl PersistingOperator {
             | PersistedEffect::ConvergenceConfirmed { .. } => Phase::Confirm,
             _ => Phase::PersistEffect,
         };
-        activity::persist(phase, || {
-            self.inventory.write(InventoryWrite {
-                operation_id: request.execution_id.clone(),
-                item_id: request.operation.item_ref.clone(),
-                identity: request.identity.clone(),
-                expected_revision: revision,
-                effect,
-                recorded_at: now(),
-            })
+        activity::persist(phase, |context| {
+            self.inventory.write_with_context(
+                InventoryWrite {
+                    operation_id: request.execution_id.clone(),
+                    item_id: request.operation.item_ref.clone(),
+                    identity: request.identity.clone(),
+                    expected_revision: revision,
+                    effect,
+                    recorded_at: now(),
+                },
+                context,
+            )
         })
     }
     /// Only corresponding, equivalent current replicas may replace a synchronization baseline.
+    #[cfg(test)]
     fn convergence(&self, effect: &AppliedEffect) -> Option<(Baseline, Option<ParentAssociation>)> {
+        self.convergence_with_context(effect, None)
+    }
+
+    fn convergence_with_context(
+        &self,
+        effect: &AppliedEffect,
+        context: Option<&ActivityContext>,
+    ) -> Option<(Baseline, Option<ParentAssociation>)> {
         if !effect.verified {
             return None;
         }
@@ -149,7 +162,7 @@ impl PersistingOperator {
         else {
             return None;
         };
-        let parent = self.confirmed_parent(local_parent, remote_parents)?;
+        let parent = self.confirmed_parent_with_context(local_parent, remote_parents, context)?;
         Some((
             Baseline {
                 state: BaselineState::Synced,
@@ -166,10 +179,11 @@ impl PersistingOperator {
         ))
     }
     /// Initial child effects require an existing confirmed parent association before dispatch.
-    fn confirmed_parent(
+    fn confirmed_parent_with_context(
         &self,
         local_parent: &std::path::Path,
         remote_parents: &[RemoteId],
+        context: Option<&ActivityContext>,
     ) -> Option<Option<ParentAssociation>> {
         if remote_parents.len() != 1 {
             return None;
@@ -179,14 +193,17 @@ impl PersistingOperator {
         {
             None
         } else {
-            let lookup = self.inventory.lookup(InventoryLookup {
-                account_id: self.config.account_id.clone(),
-                sync_root_id: self.config.sync_root_id.clone(),
-                item_id: None,
-                remote_id: Some(remote_parents[0].clone()),
-                local_identity: Evidence::NotCollected,
-                local_path: Some(local_parent.to_path_buf()),
-            });
+            let lookup = self.inventory.lookup_with_context(
+                InventoryLookup {
+                    account_id: self.config.account_id.clone(),
+                    sync_root_id: self.config.sync_root_id.clone(),
+                    item_id: None,
+                    remote_id: Some(remote_parents[0].clone()),
+                    local_identity: Evidence::NotCollected,
+                    local_path: Some(local_parent.to_path_buf()),
+                },
+                context,
+            );
             if lookup.status != InventoryLookupStatus::Found {
                 return None;
             }
@@ -262,7 +279,10 @@ impl PersistingOperator {
                     .and_then(|s| s.path.clone()),
             }
         } else {
-            let Some((baseline, parent)) = self.convergence(&effect) else {
+            let inventory_context = span.activity_context();
+            let Some((baseline, parent)) =
+                self.convergence_with_context(&effect, inventory_context.as_ref())
+            else {
                 result.error = Some(filesystem::stale().failure());
                 return result;
             };
@@ -399,7 +419,11 @@ impl PersistingOperator {
         }
         Ok(())
     }
-    fn validate(&self, r: &ExecuteOperationRequest) -> Result<(), OperatorError> {
+    fn validate(
+        &self,
+        r: &ExecuteOperationRequest,
+        context: Option<&ActivityContext>,
+    ) -> Result<(), OperatorError> {
         let op = &r.operation;
         self.filesystem.validate_root()?;
         if r.identity.account_id != self.config.account_id
@@ -500,14 +524,17 @@ impl PersistingOperator {
             }
         }
         // A second unresolved execution must be recovered before any new mutation.
-        let lookup = self.inventory.lookup(InventoryLookup {
-            account_id: r.identity.account_id.clone(),
-            sync_root_id: r.identity.sync_root_id.clone(),
-            item_id: r.identity.item_id.clone(),
-            remote_id: None,
-            local_identity: Evidence::NotCollected,
-            local_path: None,
-        });
+        let lookup = self.inventory.lookup_with_context(
+            InventoryLookup {
+                account_id: r.identity.account_id.clone(),
+                sync_root_id: r.identity.sync_root_id.clone(),
+                item_id: r.identity.item_id.clone(),
+                remote_id: None,
+                local_identity: Evidence::NotCollected,
+                local_path: None,
+            },
+            context,
+        );
         match lookup.status {
             InventoryLookupStatus::Found => {
                 let snapshot = lookup.snapshot.ok_or_else(filesystem::stale)?;
@@ -515,7 +542,7 @@ impl PersistingOperator {
                     op.action,
                     OperationAction::TrashRemote | OperationAction::RemoveLocal
                 ) {
-                    self.validate_trash(r, &snapshot)?;
+                    self.validate_trash(r, &snapshot, context)?;
                 }
                 if crate::projections::workspace(&r.remote)
                     && r.local.state == FileState::Present
@@ -571,22 +598,25 @@ impl PersistingOperator {
                     op.action,
                     OperationAction::RegisterIdentity | OperationAction::Adopt
                 ) {
-                    let existing = self.inventory.lookup(InventoryLookup {
-                        account_id: r.identity.account_id.clone(),
-                        sync_root_id: r.identity.sync_root_id.clone(),
-                        item_id: None,
-                        remote_id: r.identity.remote_id.clone(),
-                        local_path: if r.local.state == FileState::Present {
-                            r.local.path.clone()
-                        } else {
-                            None
+                    let existing = self.inventory.lookup_with_context(
+                        InventoryLookup {
+                            account_id: r.identity.account_id.clone(),
+                            sync_root_id: r.identity.sync_root_id.clone(),
+                            item_id: None,
+                            remote_id: r.identity.remote_id.clone(),
+                            local_path: if r.local.state == FileState::Present {
+                                r.local.path.clone()
+                            } else {
+                                None
+                            },
+                            local_identity: if r.local.state == FileState::Present {
+                                r.local.identity.clone()
+                            } else {
+                                Evidence::NotCollected
+                            },
                         },
-                        local_identity: if r.local.state == FileState::Present {
-                            r.local.identity.clone()
-                        } else {
-                            Evidence::NotCollected
-                        },
-                    });
+                        context,
+                    );
                     if existing.status != InventoryLookupStatus::NotFound {
                         return Err(filesystem::stale());
                     }
@@ -679,7 +709,11 @@ impl PersistingOperator {
             inventory_write: None,
         };
         span.phase(Phase::Acquire, State::Waiting(Wait::Inventory));
-        let _lease = match self.inventory.execution_lease() {
+        let inventory_context = span.activity_context();
+        let _lease = match self
+            .inventory
+            .execution_lease_with_context(inventory_context.as_ref())
+        {
             Ok(lease) => lease,
             Err(_) => {
                 result.error = Some(OperatorError::new(OperatorErrorKind::Unavailable).failure());
@@ -687,7 +721,8 @@ impl PersistingOperator {
             }
         };
         span.phase(Phase::Validate, State::Running);
-        if let Err(error) = self.validate(&r) {
+        let inventory_context = span.activity_context();
+        if let Err(error) = self.validate(&r, inventory_context.as_ref()) {
             result.error = Some(error.failure());
             return result;
         }
@@ -701,7 +736,10 @@ impl PersistingOperator {
             return self.metadata(&r, result, span).await;
         }
         span.phase(Phase::Prepare, State::Running);
-        let record = match self.prepare(&r).await {
+        let record = match self
+            .prepare_with_context(&r, inventory_context.as_ref())
+            .await
+        {
             Ok(record) => record,
             Err(error) => {
                 result.error = Some(error.failure());
@@ -814,7 +852,12 @@ impl PersistingOperator {
         );
         if receipt.status == WriteStatus::Written && status == OperationResultStatus::Succeeded {
             span.phase(Phase::Confirm, State::Running);
-            let confirmed = match result.effect.as_ref().and_then(|e| self.convergence(e)) {
+            let inventory_context = span.activity_context();
+            let confirmed = match result
+                .effect
+                .as_ref()
+                .and_then(|e| self.convergence_with_context(e, inventory_context.as_ref()))
+            {
                 Some((baseline, parent)) => PersistedEffect::BaselineConfirmed { baseline, parent },
                 None => PersistedEffect::OperationConfirmed,
             };
